@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "audio-listen": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/ryohji/Study/embodied claude code/audio-listen-mcp",
+        "--extra",
+        "mlx",
+        "audio-listen-mcp"
+      ],
+      "env": {
+        "WHISPER_ENGINE": "mlx",
+        "WHISPER_MODEL": "small",
+        "WHISPER_LANGUAGE": "ja",
+        "AUDIO_DEVICE": "0"
+      }
+    },
+    "audio-speak": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/ryohji/Study/embodied claude code/audio-speak-mcp",
+        "audio-speak-mcp"
+      ],
+      "env": {
+        "TTS_ENGINE": "macos",
+        "TTS_VOICE": "Kyoko"
+      }
+    }
+  }
+}
