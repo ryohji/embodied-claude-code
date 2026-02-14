@@ -1,0 +1,23 @@
+[project]
+name = "audio-listen-mcp"
+version = "0.1.0"
+description = "MCP server for audio listening and transcription using Whisper"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+mlx = ["mlx-whisper>=0.1.0"]
+pytorch = ["openai-whisper>=20231117"]
+
+[project.scripts]
+audio-listen-mcp = "audio_listen_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/audio_listen_mcp"]
