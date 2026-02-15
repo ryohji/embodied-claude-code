@@ -29,6 +29,15 @@
         "TTS_ENGINE": "macos",
         "TTS_VOICE": "Kyoko"
       }
+    },
+    "memory": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/ryohji/Study/embodied claude code/memory-mcp",
+        "memory-mcp"
+      ]
     }
   }
 }
