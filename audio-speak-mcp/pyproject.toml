@@ -10,6 +10,7 @@ dependencies = [
 
 [project.optional-dependencies]
 elevenlabs = ["elevenlabs>=1.0.0"]
+kokoro = ["mlx-audio>=0.3.0", "misaki[en,ja]>=0.1.0", "soundfile>=0.12.0", "num2words>=0.5.0"]
 
 [project.scripts]
 audio-speak-mcp = "audio_speak_mcp.server:main"
@@ -17,6 +18,9 @@ audio-speak-mcp = "audio_speak_mcp.server:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+prerelease = "allow"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/audio_speak_mcp"]

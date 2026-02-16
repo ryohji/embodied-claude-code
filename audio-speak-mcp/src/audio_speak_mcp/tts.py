@@ -180,6 +180,105 @@ class ElevenLabsTTSEngine(TTSEngine):
             return []
 
 
+class KokoroTTSEngine(TTSEngine):
+    """TTS engine using mlx-kokoro for local speech synthesis on Apple Silicon."""
+
+    def __init__(
+        self,
+        default_voice: str,
+        model_id: str,
+        default_speed: float,
+        default_lang_code: str,
+    ) -> None:
+        self._default_voice = default_voice
+        self._model_id = model_id
+        self._default_speed = default_speed
+        self._default_lang_code = default_lang_code
+        self._model = None
+
+    def _ensure_model(self):
+        if self._model is None:
+            from mlx_audio.tts.utils import load_model
+
+            logger.info("Loading Kokoro model: %s", self._model_id)
+            self._model = load_model(self._model_id)
+            logger.info("Kokoro model loaded")
+        return self._model
+
+    async def say(self, text: str, voice: str | None = None, rate: int | None = None) -> str:
+        try:
+            import mlx_audio  # noqa: F401
+        except ImportError:
+            return (
+                "mlx-audio パッケージがインストールされていません。"
+                "pip install mlx-audio 'misaki[ja]' でインストールしてください。"
+            )
+
+        if not shutil.which("mpv"):
+            return "mpv が見つかりません。brew install mpv でインストールしてください。"
+
+        voice = voice or self._default_voice
+        speed = self._default_speed
+
+        try:
+            import numpy as np
+            import soundfile as sf
+
+            model = await asyncio.to_thread(self._ensure_model)
+
+            # Generate audio (may return multiple chunks for long text)
+            results = await asyncio.to_thread(
+                lambda: list(model.generate(
+                    text,
+                    voice=voice,
+                    speed=speed,
+                    lang_code=self._default_lang_code,
+                ))
+            )
+            if not results:
+                return "Kokoro: 音声の生成に失敗しました。"
+
+            # Concatenate all chunks
+            chunks = [np.array(r.audio) for r in results]
+            audio_data = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+
+            # Write to temp wav file
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                sf.write(f.name, audio_data, 24000)
+                audio_path = f.name
+
+            # Play with mpv
+            proc = await asyncio.create_subprocess_exec(
+                "mpv", "--no-video", "--really-quiet", audio_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            Path(audio_path).unlink(missing_ok=True)
+
+            if proc.returncode != 0:
+                return f"mpv の再生でエラーが発生しました (code {proc.returncode})"
+
+            return f"発話完了（Kokoro, voice={voice}, {len(text)}文字）"
+        except Exception as e:
+            logger.exception("Kokoro TTS error")
+            return f"Kokoro でエラーが発生しました: {e!s}"
+
+    async def list_voices(self) -> list[dict[str, str]]:
+        return [
+            {"name": "jf_alpha", "language": "ja", "sample": "こんにちは（女性・推奨）"},
+            {"name": "jf_gongitsune", "language": "ja", "sample": "こんにちは（女性）"},
+            {"name": "jf_tebukuro", "language": "ja", "sample": "こんにちは（女性）"},
+            {"name": "jf_nezumi", "language": "ja", "sample": "こんにちは（女性）"},
+            {"name": "jm_kumo", "language": "ja", "sample": "こんにちは（男性）"},
+            {"name": "af_heart", "language": "en", "sample": "Hello (Female, best English)"},
+            {"name": "af_alloy", "language": "en", "sample": "Hello (Female)"},
+            {"name": "am_adam", "language": "en", "sample": "Hello (Male)"},
+            {"name": "bf_emma", "language": "en-GB", "sample": "Hello (Female, British)"},
+            {"name": "bm_george", "language": "en-GB", "sample": "Hello (Male, British)"},
+        ]
+
+
 def create_engine(config: SpeakConfig) -> TTSEngine:
     """Create a TTS engine based on configuration."""
     if config.tts_engine == "elevenlabs":
@@ -194,6 +293,19 @@ def create_engine(config: SpeakConfig) -> TTSEngine:
             logger.warning(
                 "ElevenLabs API key not set, falling back to macOS TTS"
             )
+
+    if config.tts_engine == "kokoro":
+        logger.info(
+            "Using Kokoro TTS engine (voice=%s, model=%s)",
+            config.kokoro_voice,
+            config.kokoro_model_id,
+        )
+        return KokoroTTSEngine(
+            default_voice=config.kokoro_voice,
+            model_id=config.kokoro_model_id,
+            default_speed=config.kokoro_speed,
+            default_lang_code=config.kokoro_lang_code,
+        )
 
     logger.info("Using macOS TTS engine (voice=%s)", config.tts_voice)
     return MacOSTTSEngine(

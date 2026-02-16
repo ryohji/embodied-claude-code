@@ -26,7 +26,7 @@ Python や mlx-whisper 等の依存パッケージは uv が自動でインス�
 ### 1. ffmpeg と uv のインストール
 
 ```bash
-brew install ffmpeg uv
+brew install ffmpeg uv mpv
 ```
 
 これだけで OK。Python 本体、mlx-whisper、MCP SDK などの依存パッケージはすべて uv が自動でインストールする（.mcp.json の `uv run` 実行時に解決される）。
@@ -110,17 +110,29 @@ Claude: (スピーカー)「会話モードを終了します。」
 
 | 変数 | 説明 | デフォルト |
 |------|------|-----------|
-| `TTS_ENGINE` | TTS エンジン (`macos` / `elevenlabs`) | `macos` |
+| `TTS_ENGINE` | TTS エンジン (`macos` / `kokoro` / `elevenlabs`) | `macos` |
 | `TTS_VOICE` | macOS の音声名 | `Kyoko` |
 | `TTS_RATE` | 発話速度 (words per minute) | システムデフォルト |
+| `KOKORO_VOICE` | Kokoro 音声プリセット | `jf_alpha` |
+| `KOKORO_MODEL_ID` | Kokoro モデル ID | `mlx-community/Kokoro-82M-bf16` |
+| `KOKORO_SPEED` | Kokoro 発話速度倍率 | `1.0` |
+| `KOKORO_LANG_CODE` | Kokoro 言語コード (`j` / `a` / `b`) | `j` |
 | `ELEVENLABS_API_KEY` | ElevenLabs API キー | 未設定時は macOS にフォールバック |
 | `ELEVENLABS_VOICE_ID` | ElevenLabs 音声 ID | — |
 | `ELEVENLABS_MODEL_ID` | ElevenLabs モデル ID | `eleven_v3` |
 
+#### TTS エンジン比較
+
+| エンジン | 品質 | レイテンシ | 備考 |
+|----------|------|-----------|------|
+| macOS (`macos`) | 低 | 即時 | OS 標準の `say` コマンド |
+| Kokoro (`kokoro`) | 中 | 2-3 秒 | Apple Silicon ローカル推論。`mpv` が必要 |
+| ElevenLabs (`elevenlabs`) | 高 | 10-30 秒 | クラウド API。API キーと `mpv` が必要 |
+
 ## 設計上の特徴
 
 - **関心の分離** — 音声入力と音声出力を独立した MCP サーバーに分離。依存関係が異なり、片方だけの利用も可能
-- **エンジン抽象化** — Whisper (mlx / pytorch) と TTS (macOS say / ElevenLabs) を抽象レイヤで切り替え可能
+- **エンジン抽象化** — Whisper (mlx / pytorch) と TTS (macOS say / Kokoro / ElevenLabs) を抽象レイヤで切り替え可能
 - **グレースフルフォールバック** — mlx-whisper が使えなければ PyTorch 版に自動フォールバック。ElevenLabs の API キーがなければ macOS say にフォールバック
 - **遅延ロード** — Whisper モデルは初回使用時に 1 回だけロード。embodied-claude の毎回ロードする設計を改善
 - **VAD (Voice Activity Detection)** — 発話終了を検知して自動停止。固定秒数の録音も選択可能

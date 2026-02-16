@@ -7,7 +7,11 @@
       "Bash(ffmpeg:*)",
       "mcp__audio-listen__listen",
       "mcp__audio-listen__get_audio_devices",
-      "mcp__audio-speak__say"
+      "mcp__audio-speak__say",
+      "Bash(say -v Kyoko:*)",
+      "mcp__memory__list_recent_memories",
+      "WebFetch(domain:pypi.org)",
+      "Bash(uv pip install:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
