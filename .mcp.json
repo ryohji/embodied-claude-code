@@ -23,11 +23,12 @@
         "run",
         "--directory",
         "/Users/ryohji/Study/embodied claude code/audio-speak-mcp",
+        "--extra",
+        "kokoro",
         "audio-speak-mcp"
       ],
       "env": {
-        "TTS_ENGINE": "macos",
-        "TTS_VOICE": "Kyoko"
+        "TTS_ENGINE": "kokoro"
       }
     },
     "memory": {
