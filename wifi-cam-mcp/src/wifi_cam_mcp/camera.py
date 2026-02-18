@@ -274,9 +274,9 @@ class TapoCamera:
         # Process image
         image = Image.open(io.BytesIO(image_data))
 
-        # Tapo cameras output images assuming ceiling mount.
-        # In normal (desk) mode the image is upside-down, so rotate 180°.
-        if self._config.mount_mode != "ceiling":
+        # In ceiling mount mode the camera is physically upside-down,
+        # so rotate the captured image 180° to correct orientation.
+        if self._config.mount_mode == "ceiling":
             image = image.rotate(180)
 
         # Resize if needed
