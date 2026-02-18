@@ -39,6 +39,15 @@
         "/Users/ryohji/Study/embodied claude code/memory-mcp",
         "memory-mcp"
       ]
+    },
+    "wifi-cam": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/ryohji/Study/embodied claude code/wifi-cam-mcp",
+        "wifi-cam-mcp"
+      ]
     }
   }
 }
