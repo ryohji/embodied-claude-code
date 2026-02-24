@@ -48,6 +48,15 @@
         "/Users/ryohji/Study/embodied claude code/wifi-cam-mcp",
         "wifi-cam-mcp"
       ]
+    },
+    "echo-buffer": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/ryohji/Study/embodied claude code/echo-buffer-mcp",
+        "echo-buffer-mcp"
+      ]
     }
   }
 }
