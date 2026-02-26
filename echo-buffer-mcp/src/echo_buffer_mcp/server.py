@@ -50,7 +50,7 @@ class EchoBufferMCPServer:
                 Tool(
                     name="echo_read",
                     description=(
-                        "現在のエコーバッファを読む。時間減衰を適用した強度順に返す。"
+                        "現在のエコーバッファを読む。交換回数ベースの減衰を適用した強度順に返す。"
                         "セッション開始時に呼ぶことで過去の残響を確認できる。"
                     ),
                     inputSchema={
@@ -131,8 +131,10 @@ class EchoBufferMCPServer:
                             return [TextContent(type="text", text="バッファ空: 有効なエコーはありません。")]
                         lines = [f"エコー ({len(echoes)}件):"]
                         for i, e in enumerate(echoes, 1):
+                            age = e['age_steps']
+                            age_label = "最新" if age == 0 else f"{age}回前"
                             lines.append(
-                                f"[{i}] 強度={e['strength']:.3f} ({e['age_hours']}h前)\n"
+                                f"[{i}] 強度={e['strength']:.3f} ({age_label})\n"
                                 f"    {e['content']}"
                             )
                         return [TextContent(type="text", text="\n".join(lines))]
@@ -154,14 +156,16 @@ class EchoBufferMCPServer:
                             f"  総数: {status['total_stored']}件",
                             f"  有効: {status['active']}件 (強度≥0.05)",
                             f"  凍結: {'はい' if status['frozen'] else 'いいえ'}",
-                            f"  半減期: {status['half_life_hours']}時間",
+                            f"  半減期: {status['half_life_steps']}回交換",
                             "",
                         ]
                         if status["echoes"]:
                             lines.append("有効なエコー:")
                             for e in status["echoes"]:
+                                age = e['age_steps']
+                                age_label = "最新" if age == 0 else f"{age}回前"
                                 lines.append(
-                                    f"  [{e['strength']:.3f}] ({e['age_hours']}h前) {e['content']}"
+                                    f"  [{e['strength']:.3f}] ({age_label}) {e['content']}"
                                 )
                         else:
                             lines.append("(有効なエコーなし)")
