@@ -19,5 +19,5 @@ except Exception:
 " 2>/dev/null || echo "1")
 
 if [ "$ASSISTANT_COUNT" = "0" ]; then
-    echo "【セッション開始】memory-mcp の list_recent_memories を実行して前回の記憶を確認し、文脈を回復してください。テキスト対話・会話モード・生活モードを問わず必ず実行してください。"
+    echo "【セッション開始】CLAUDE.md のセッション開始プロトコルを実行してください。"
 fi
