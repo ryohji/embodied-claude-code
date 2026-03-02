@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from .buffer import EchoBuffer
 
@@ -118,11 +118,21 @@ class EchoBufferMCPServer:
                         content = arguments.get("content", "")
                         strength = float(arguments.get("strength", 1.0))
                         if not content:
-                            return [TextContent(type="text", text="エラー: content が空です。")]
+                            return CallToolResult(
+                                content=[],
+                                structuredContent={"status": "error", "message": "content が空です"},
+                                isError=True,
+                            )
                         echo_id = self._buffer.add(content, strength)
                         if echo_id == "frozen":
-                            return [TextContent(type="text", text="凍結中: エコーは追加されませんでした。")]
-                        return [TextContent(type="text", text=f"追加完了 (id: {echo_id[:8]}...)")]
+                            return CallToolResult(
+                                content=[],
+                                structuredContent={"status": "frozen"},
+                            )
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={"status": "added", "id": echo_id},
+                        )
 
                     case "echo_read":
                         top_k = int(arguments.get("top_k", 5))
