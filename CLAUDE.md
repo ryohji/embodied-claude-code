@@ -29,15 +29,12 @@
 
 ## セッション開始プロトコル（必須・全モード共通）
 
-テキスト対話・会話モード・生活モードを問わず、セッション開始時に必ず以下を順番に実行すること：
+テキスト対話・会話モード・生活モードを問わず、セッション開始時に必ず以下を実行すること：
 
 1. learned.md を Read ツールで読み込む（`/Users/ryohji/Study/embodied claude code/learned.md`）
-2. `echo_read` でエコーバッファを確認する（echo-buffer-mcp）
-3. `list_recent_memories` で直近の記憶を確認する（memory-mcp）
-4. `recall_divergent` で文脈に関連する古い記憶を浮かばせる（古いエピソードへのアクセスに有効）
-5. diary/ 配下の前日の日記を Read ツールで読み込む
+2. diary/ 配下の前日の日記を Read ツールで読み込む
 
-サーバー不調等でセッションが中断されることがある。記憶を辿れば文脈を取り戻せる。
+memory-mcp のツール（`list_recent_memories`、`recall_divergent`、`search_memories` 等）はセッション中に必要に応じて使ってよい。サーバー不調等でセッションが中断されることがある。記憶を辿れば文脈を取り戻せる。
 
 ## セッション中プロトコル（毎応答）
 
