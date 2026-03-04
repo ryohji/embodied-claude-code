@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from .config import SpeakConfig
 from .tts import TTSEngine, create_engine
@@ -76,15 +76,23 @@ class AudioSpeakMCPServer:
                     case "say":
                         text = arguments.get("text", "")
                         if not text:
-                            return [TextContent(
-                                type="text",
-                                text="エラー: テキストが空です。",
-                            )]
+                            return CallToolResult(
+                                content=[],
+                                structuredContent={"status": "error", "message": "テキストが空です"},
+                                isError=True,
+                            )
                         voice = arguments.get("voice")
                         rate = arguments.get("rate")
                         engine = self._ensure_engine()
-                        result = await engine.say(text, voice=voice, rate=rate)
-                        return [TextContent(type="text", text=result)]
+                        await engine.say(text, voice=voice, rate=rate)
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={
+                                "status": "spoken",
+                                "engine": self._config.tts_engine,
+                                "text": text,
+                            },
+                        )
 
                     case "get_voices":
                         engine = self._ensure_engine()

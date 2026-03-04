@@ -91,10 +91,12 @@ class EchoBuffer:
             for e, s, ordinal_age in active[:top_k]
         ]
 
-    def clear(self) -> None:
-        """バッファを全消去する。"""
+    def clear(self) -> int:
+        """バッファを全消去する。消去したエコーの件数を返す。"""
+        count = len(self._echoes)
         self._echoes = []
         self._save()
+        return count
 
     def freeze(self, enabled: bool) -> None:
         """新規追加を停止/再開する。"""

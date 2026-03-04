@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from .config import MemoryConfig, ServerConfig
 from .episode import EpisodeManager
@@ -617,12 +617,18 @@ class MemoryMCPServer:
                             )
                             linked_info = ""
 
-                        return [
-                            TextContent(
-                                type="text",
-                                text=f"Memory saved!\nID: {memory.id}\nTimestamp: {memory.timestamp}\nEmotion: {memory.emotion}\nImportance: {memory.importance}\nCategory: {memory.category}{linked_info}",
-                            )
-                        ]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={
+                                "status": "saved",
+                                "id": memory.id,
+                                "timestamp": memory.timestamp,
+                                "emotion": memory.emotion,
+                                "importance": memory.importance,
+                                "category": memory.category,
+                                "linked_count": len(memory.linked_ids),
+                            },
+                        )
 
                     case "search_memories":
                         query = arguments.get("query", "")
@@ -819,13 +825,10 @@ Date Range:
                             link_update_strength=arguments.get("link_update_strength", 0.2),
                         )
 
-                        return [
-                            TextContent(
-                                type="text",
-                                text="Consolidation completed:\n"
-                                f"{json.dumps(stats, indent=2, ensure_ascii=False)}",
-                            )
-                        ]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={"status": "consolidated", **stats},
+                        )
 
                     case "get_memory_chain":
                         memory_id = arguments.get("memory_id", "")
@@ -885,19 +888,20 @@ Date Range:
                             auto_summarize=arguments.get("auto_summarize", True),
                         )
 
-                        return [
-                            TextContent(
-                                type="text",
-                                text=f"Episode created!\n"
-                                     f"ID: {episode.id}\n"
-                                     f"Title: {episode.title}\n"
-                                     f"Memories: {len(episode.memory_ids)}\n"
-                                     f"Time: {episode.start_time} - {episode.end_time}\n"
-                                     f"Emotion: {episode.emotion}\n"
-                                     f"Importance: {episode.importance}\n"
-                                     f"Summary: {episode.summary[:100]}...",
-                            )
-                        ]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={
+                                "status": "created",
+                                "id": episode.id,
+                                "title": episode.title,
+                                "memory_count": len(episode.memory_ids),
+                                "start_time": episode.start_time,
+                                "end_time": episode.end_time,
+                                "emotion": episode.emotion,
+                                "importance": episode.importance,
+                                "summary_preview": episode.summary[:100] if episode.summary else "",
+                            },
+                        )
 
                     case "search_episodes":
                         if self._episode_manager is None:
@@ -983,17 +987,19 @@ Date Range:
                             importance=arguments.get("importance", 3),
                         )
 
-                        return [
-                            TextContent(
-                                type="text",
-                                text=f"Visual memory saved!\n"
-                                     f"ID: {memory.id}\n"
-                                     f"Content: {memory.content}\n"
-                                     f"Image: {image_path}\n"
-                                     f"Camera: pan={camera_position.pan_angle}°, tilt={camera_position.tilt_angle}°\n"
-                                     f"Emotion: {memory.emotion} | Importance: {memory.importance}",
-                            )
-                        ]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={
+                                "status": "saved",
+                                "id": memory.id,
+                                "content": memory.content,
+                                "image_path": image_path,
+                                "camera_pan": camera_position.pan_angle,
+                                "camera_tilt": camera_position.tilt_angle,
+                                "emotion": memory.emotion,
+                                "importance": memory.importance,
+                            },
+                        )
 
                     case "save_audio_memory":
                         if self._sensory_integration is None:
@@ -1019,17 +1025,18 @@ Date Range:
                             importance=arguments.get("importance", 3),
                         )
 
-                        return [
-                            TextContent(
-                                type="text",
-                                text=f"Audio memory saved!\n"
-                                     f"ID: {memory.id}\n"
-                                     f"Content: {memory.content}\n"
-                                     f"Audio: {audio_path}\n"
-                                     f"Transcript: {transcript}\n"
-                                     f"Emotion: {memory.emotion} | Importance: {memory.importance}",
-                            )
-                        ]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={
+                                "status": "saved",
+                                "id": memory.id,
+                                "content": memory.content,
+                                "audio_path": audio_path,
+                                "transcript": transcript,
+                                "emotion": memory.emotion,
+                                "importance": memory.importance,
+                            },
+                        )
 
                     case "recall_by_camera_position":
                         if self._sensory_integration is None:
@@ -1103,12 +1110,10 @@ Date Range:
                         await working_memory.refresh_important(self._memory_store)
 
                         size = working_memory.size()
-                        return [
-                            TextContent(
-                                type="text",
-                                text=f"Working memory refreshed. Now contains {size} memories.",
-                            )
-                        ]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={"status": "refreshed", "size": size},
+                        )
 
                     # Phase 5: Causal Links
                     case "link_memories":
@@ -1130,16 +1135,16 @@ Date Range:
                             note=note,
                         )
 
-                        return [
-                            TextContent(
-                                type="text",
-                                text=f"Link created!\n"
-                                     f"Source: {source_id[:8]}...\n"
-                                     f"Target: {target_id[:8]}...\n"
-                                     f"Type: {link_type}\n"
-                                     f"Note: {note or '(none)'}",
-                            )
-                        ]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={
+                                "status": "linked",
+                                "source_id": source_id,
+                                "target_id": target_id,
+                                "link_type": link_type,
+                                "note": note,
+                            },
+                        )
 
                     case "get_causal_chain":
                         memory_id = arguments.get("memory_id", "")

@@ -150,14 +150,19 @@ class EchoBufferMCPServer:
                         return [TextContent(type="text", text="\n".join(lines))]
 
                     case "echo_clear":
-                        self._buffer.clear()
-                        return [TextContent(type="text", text="エコーバッファを全消去しました。")]
+                        count = self._buffer.clear()
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={"status": "cleared", "count": count},
+                        )
 
                     case "echo_freeze":
                         enabled = bool(arguments.get("enabled", True))
                         self._buffer.freeze(enabled)
-                        state = "凍結" if enabled else "再開"
-                        return [TextContent(type="text", text=f"エコーバッファを{state}しました。")]
+                        return CallToolResult(
+                            content=[],
+                            structuredContent={"status": "frozen" if enabled else "resumed"},
+                        )
 
                     case "echo_status":
                         status = self._buffer.status()
