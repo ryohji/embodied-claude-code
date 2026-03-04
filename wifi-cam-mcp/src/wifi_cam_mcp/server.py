@@ -9,6 +9,7 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import (
+    CallToolResult,
     ImageContent,
     TextContent,
     Tool,
@@ -397,23 +398,23 @@ class CameraMCPServer:
 
                     case "look_left":
                         degrees = arguments.get("degrees", 30)
-                        result = await self._camera.pan_left(degrees)
-                        return [TextContent(type="text", text=result.message)]
+                        await self._camera.pan_left(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "left", "degrees": degrees})
 
                     case "look_right":
                         degrees = arguments.get("degrees", 30)
-                        result = await self._camera.pan_right(degrees)
-                        return [TextContent(type="text", text=result.message)]
+                        await self._camera.pan_right(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "right", "degrees": degrees})
 
                     case "look_up":
                         degrees = arguments.get("degrees", 20)
-                        result = await self._camera.tilt_up(degrees)
-                        return [TextContent(type="text", text=result.message)]
+                        await self._camera.tilt_up(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "up", "degrees": degrees})
 
                     case "look_down":
                         degrees = arguments.get("degrees", 20)
-                        result = await self._camera.tilt_down(degrees)
-                        return [TextContent(type="text", text=result.message)]
+                        await self._camera.tilt_down(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "down", "degrees": degrees})
 
                     case "look_around":
                         captures = await self._camera.look_around()
@@ -459,8 +460,8 @@ class CameraMCPServer:
 
                     case "camera_go_to_preset":
                         preset_id = arguments.get("preset_id", "")
-                        result = await self._camera.go_to_preset(preset_id)
-                        return [TextContent(type="text", text=result.message)]
+                        await self._camera.go_to_preset(preset_id)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "preset_id": preset_id})
 
                     case "listen":
                         duration = min(arguments.get("duration", 5), 30)
@@ -527,99 +528,59 @@ class CameraMCPServer:
 
                     case "right_eye_look_left":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 30)
-                        result = await self._camera_right.pan_left(degrees)
-                        return [TextContent(type="text", text=f"Right eye: {result.message}")]
+                        await self._camera_right.pan_left(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "right", "direction": "left", "degrees": degrees})
 
                     case "right_eye_look_right":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 30)
-                        result = await self._camera_right.pan_right(degrees)
-                        return [TextContent(type="text", text=f"Right eye: {result.message}")]
+                        await self._camera_right.pan_right(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "right", "direction": "right", "degrees": degrees})
 
                     case "right_eye_look_up":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 20)
-                        result = await self._camera_right.tilt_up(degrees)
-                        return [TextContent(type="text", text=f"Right eye: {result.message}")]
+                        await self._camera_right.tilt_up(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "right", "direction": "up", "degrees": degrees})
 
                     case "right_eye_look_down":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 20)
-                        result = await self._camera_right.tilt_down(degrees)
-                        return [TextContent(type="text", text=f"Right eye: {result.message}")]
+                        await self._camera_right.tilt_down(degrees)
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "right", "direction": "down", "degrees": degrees})
 
                     case "both_eyes_look_left":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 30)
-                        left_task = self._camera.pan_left(degrees)
-                        right_task = self._camera_right.pan_left(degrees)
-                        await asyncio.gather(left_task, right_task)
-                        return [
-                            TextContent(
-                                type="text", text=f"Both eyes moved left by {degrees} degrees"
-                            )
-                        ]
+                        await asyncio.gather(self._camera.pan_left(degrees), self._camera_right.pan_left(degrees))
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "both", "direction": "left", "degrees": degrees})
 
                     case "both_eyes_look_right":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 30)
-                        left_task = self._camera.pan_right(degrees)
-                        right_task = self._camera_right.pan_right(degrees)
-                        await asyncio.gather(left_task, right_task)
-                        return [
-                            TextContent(
-                                type="text", text=f"Both eyes moved right by {degrees} degrees"
-                            )
-                        ]
+                        await asyncio.gather(self._camera.pan_right(degrees), self._camera_right.pan_right(degrees))
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "both", "direction": "right", "degrees": degrees})
 
                     case "both_eyes_look_up":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 20)
-                        left_task = self._camera.tilt_up(degrees)
-                        right_task = self._camera_right.tilt_up(degrees)
-                        await asyncio.gather(left_task, right_task)
-                        return [
-                            TextContent(
-                                type="text", text=f"Both eyes tilted up by {degrees} degrees"
-                            )
-                        ]
+                        await asyncio.gather(self._camera.tilt_up(degrees), self._camera_right.tilt_up(degrees))
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "both", "direction": "up", "degrees": degrees})
 
                     case "both_eyes_look_down":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         degrees = arguments.get("degrees", 20)
-                        left_task = self._camera.tilt_down(degrees)
-                        right_task = self._camera_right.tilt_down(degrees)
-                        await asyncio.gather(left_task, right_task)
-                        return [
-                            TextContent(
-                                type="text", text=f"Both eyes tilted down by {degrees} degrees"
-                            )
-                        ]
+                        await asyncio.gather(self._camera.tilt_down(degrees), self._camera_right.tilt_down(degrees))
+                        return CallToolResult(content=[], structuredContent={"status": "moved", "eye": "both", "direction": "down", "degrees": degrees})
 
                     case "get_eye_positions":
                         if not self._camera_right:
@@ -645,49 +606,33 @@ class CameraMCPServer:
 
                     case "align_eyes":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         left_pos = self._camera.get_position()
                         right_pos = self._camera_right.get_position()
 
                         pan_diff = left_pos.pan - right_pos.pan
                         tilt_diff = left_pos.tilt - right_pos.tilt
 
-                        messages = []
+                        if pan_diff == 0 and tilt_diff == 0:
+                            return CallToolResult(content=[], structuredContent={"status": "already_aligned"})
+
                         if pan_diff > 0:
                             await self._camera_right.pan_right(pan_diff)
-                            messages.append(f"Right eye panned right by {pan_diff}°")
                         elif pan_diff < 0:
                             await self._camera_right.pan_left(-pan_diff)
-                            messages.append(f"Right eye panned left by {-pan_diff}°")
-
                         if tilt_diff > 0:
                             await self._camera_right.tilt_up(tilt_diff)
-                            messages.append(f"Right eye tilted up by {tilt_diff}°")
                         elif tilt_diff < 0:
                             await self._camera_right.tilt_down(-tilt_diff)
-                            messages.append(f"Right eye tilted down by {-tilt_diff}°")
 
-                        if not messages:
-                            return [TextContent(type="text", text="Eyes already aligned!")]
-
-                        return [
-                            TextContent(type="text", text="Aligned eyes: " + ", ".join(messages))
-                        ]
+                        return CallToolResult(content=[], structuredContent={"status": "aligned", "pan_diff": pan_diff, "tilt_diff": tilt_diff})
 
                     case "reset_eye_positions":
                         if not self._camera_right:
-                            return [
-                                TextContent(type="text", text="Error: Right camera not configured")
-                            ]
+                            return [TextContent(type="text", text="Error: Right camera not configured")]
                         self._camera.reset_position_tracking()
                         self._camera_right.reset_position_tracking()
-                        return [
-                            TextContent(
-                                type="text", text="Both eyes position tracking reset to (0, 0)"
-                            )
-                        ]
+                        return CallToolResult(content=[], structuredContent={"status": "reset"})
 
                     case _:
                         return [TextContent(type="text", text=f"Unknown tool: {name}")]
