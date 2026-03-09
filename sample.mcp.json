@@ -1,0 +1,66 @@
+{
+  "mcpServers": {
+    "audio-listen": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/embodied-claude-code/audio-listen-mcp",
+        "--extra",
+        "mlx",
+        "audio-listen-mcp"
+      ],
+      "env": {
+        "WHISPER_ENGINE": "mlx",
+        "WHISPER_MODEL": "small",
+        "WHISPER_LANGUAGE": "ja",
+        "AUDIO_DEVICE": "0"
+      }
+    },
+    "audio-speak": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/embodied-claude-code/audio-speak-mcp",
+        "--extra",
+        "kokoro",
+        "audio-speak-mcp"
+      ],
+      "env": {
+        "TTS_ENGINE": "kokoro",
+        "TAPO_CAMERA_HOST": "192.168.1.21",
+        "TAPO_USERNAME": "YOUR_TAPO_USERNAME",
+        "TAPO_PASSWORD": "YOUR_TAPO_LOCAL_PASSWORD",
+        "TAPO_CLOUD_PASSWORD": "YOUR_TAPO_CLOUD_PASSWORD"
+      }
+    },
+    "memory": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/embodied-claude-code/memory-mcp",
+        "memory-mcp"
+      ]
+    },
+    "wifi-cam": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/embodied-claude-code/wifi-cam-mcp",
+        "wifi-cam-mcp"
+      ]
+    },
+    "echo-buffer": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/embodied-claude-code/echo-buffer-mcp",
+        "echo-buffer-mcp"
+      ]
+    }
+  }
+}

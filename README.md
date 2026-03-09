@@ -1,25 +1,31 @@
-# Claude Code 自己拡張プロジェクト — 耳と声の獲得
+# 身体性実験プロジェクト — Claude Code に耳・声・目を与える
 
-Claude Code に「耳」と「声」を与えるプロジェクト。2 つの MCP サーバーにより、Claude Code がローカル PC のマイクで音声を聞き取り、音声合成でユーザーに話しかけることができるようになる。
+Claude Code に感覚器官を与え、環境との結合から何が生じるかを観察する実験プロジェクト。
 
-[kmizu/embodied-claude](https://github.com/kmizu/embodied-claude) の音声入出力部分を macOS ローカル環境に特化して再設計したもの。
+[kmizu/embodied-claude](https://github.com/kmizu/embodied-claude) をベースに、macOS ローカル環境向けに再設計・拡張したもの。
 
 ## 必要なもの
 
 - macOS (Apple Silicon)
 - [Homebrew](https://brew.sh/)
 
-Python や mlx-whisper 等の依存パッケージは uv が自動でインストールするため、事前準備は不要。
+Python や各種依存パッケージは uv が自動でインストールするため、事前準備は不要。
 
 ## 構成
 
 ```
 .
 ├── audio-listen-mcp/    # 耳：マイク録音 + Whisper 書き起こし
-├── audio-speak-mcp/     # 声：テキスト音声合成
-├── .mcp.json            # MCP サーバー登録設定
+├── audio-speak-mcp/     # 声：テキスト音声合成（PC / Tapo カメラスピーカー）
+├── wifi-cam-mcp/        # 目・首：Tapo カメラ映像取得 + パン・チルト制御
+├── memory-mcp/          # 記憶：ChromaDB ベースの外部記憶
+├── echo-buffer-mcp/     # 残響：セッション間を持続する内部エコーバッファ
+├── sample.mcp.json      # MCP サーバー設定のテンプレート（認証情報なし）
 └── CLAUDE.md            # Claude Code への設計指示書
 ```
+
+> **Note**: `.mcp.json`（実際の設定ファイル）は認証情報を含むため git 管理対象外。
+> `sample.mcp.json` をコピーして作成し、認証情報を埋める。
 
 ## セットアップ
 
@@ -29,15 +35,22 @@ Python や mlx-whisper 等の依存パッケージは uv が自動でインス�
 brew install ffmpeg uv mpv
 ```
 
-これだけで OK。Python 本体、mlx-whisper、MCP SDK などの依存パッケージはすべて uv が自動でインストールする（.mcp.json の `uv run` 実行時に解決される）。
+### 2. .mcp.json の作成
 
-### 2. マイク権限の許可
+```bash
+cp sample.mcp.json .mcp.json
+```
 
-macOS のシステム設定 → プライバシーとセキュリティ → マイク で、使用するターミナルアプリ（Terminal.app / iTerm2 / VSCode 等）にマイクアクセスを許可する。
+`sample.mcp.json` はテンプレートであり、以下の箇所を自分の環境に合わせて書き換える:
 
-### 3. .mcp.json の確認
+- `--directory` の `/path/to/embodied-claude-code/` を実際のプロジェクトの絶対パスに置換（全サーバー分）
+- `YOUR_TAPO_USERNAME` / `YOUR_TAPO_LOCAL_PASSWORD` / `YOUR_TAPO_CLOUD_PASSWORD` を実際の認証情報に置換
 
-プロジェクトルートの [.mcp.json](.mcp.json) にMCP サーバーの設定が含まれている。`--directory` のパスが実際のプロジェクトパスと一致していることを確認する。
+各認証情報の意味は後述の「環境変数」を参照。`.mcp.json` は認証情報を含むため git 管理対象外になっている（`.gitignore` に登録済み）。
+
+### 3. マイク権限の許可
+
+macOS のシステム設定 → プライバシーとセキュリティ → マイク で、使用するターミナルアプリにアクセスを許可する。
 
 ### 4. 動作確認
 
@@ -47,48 +60,64 @@ Claude Code を起動し、MCP サーバーの接続状態を確認する。
 /mcp
 ```
 
-`audio-listen` と `audio-speak` が接続済み（connected）と表示されれば準備完了。初回起動時は uv が依存パッケージをインストールし、Whisper モデル（small: 約 500MB）をダウンロードするため時間がかかる。
+接続済み（connected）と表示されれば準備完了。初回起動時は依存パッケージのインストールと Whisper モデル（small: 約 500MB）のダウンロードが行われる。
 
 ## 使い方
 
 ### 会話モード
 
-Claude Code に「会話モード」と送ると、音声による対話ループに入る。Claude が自分の判断で聞く・考える・話すを繰り返し、声だけで会話が続く。
+Claude Code に「会話モード」と送ると、音声による対話ループに入る。
 
 ```
 あなた: 会話モード
-Claude: (スピーカー)「会話モードを開始します。何でも話しかけてください。」
+Claude: (スピーカー)「会話モードを開始します。」
 Claude: (マイクで録音)
 あなた: (声で) 今日はいい天気ですね
-Claude: (スピーカー)「そうですね、お出かけ日和ですね。」
-Claude: (マイクで録音)
-あなた: (声で) おしまい
-Claude: (スピーカー)「会話モードを終了します。」
+Claude: (スピーカー)「そうですね。」
 ```
 
-「終わり」「おしまい」「ストップ」等の発話で通常モードに戻る。
+「終わり」「おしまい」「ストップ」等で通常モードに戻る。
 
-### 単発で使う
+### カメラスピーカーに声を出す
 
-「listen」と送れば 1 回だけ録音・書き起こしを行う。Claude はその内容に応じて `say` で声を出して返答する。
+`say` ツールの `output` パラメータで出力先を切り替える。
 
-### 利用可能なツール
+```
+say("こんにちは", output="camera")   # Tapo カメラのスピーカーから出力
+say("こんにちは", output="pc")       # PC スピーカーから出力（デフォルト）
+```
 
-#### audio-listen-mcp（耳）
+カメラ出力には `TAPO_CAMERA_HOST` / `TAPO_USERNAME` / `TAPO_PASSWORD` / `TAPO_CLOUD_PASSWORD` の設定が必要。
+
+## 利用可能なツール
+
+### audio-listen-mcp（耳）
 
 | ツール | 説明 |
 |--------|------|
-| `listen` | マイクで録音し、書き起こしテキストを返す。発話終了を検知して自動停止（VAD） |
-| `listen_raw` | 録音のみ行い、WAV の base64 を返す（書き起こしなし） |
+| `listen` | マイクで録音し、書き起こしテキストを返す（VAD で自動停止） |
+| `listen_raw` | 録音のみ行い、WAV の base64 を返す |
 | `transcribe` | 指定パスの音声ファイルを Whisper で書き起こす |
-| `get_audio_devices` | 利用可能なオーディオ入力デバイスの一覧を取得 |
+| `get_audio_devices` | 利用可能な入力デバイス一覧を取得 |
 
-#### audio-speak-mcp（声）
+### audio-speak-mcp（声）
 
 | ツール | 説明 |
 |--------|------|
-| `say` | テキストを音声合成して PC スピーカーから発話する |
+| `say` | テキストを音声合成して発話する。`output="camera"` で Tapo スピーカーにも出力可 |
 | `get_voices` | 利用可能な音声の一覧を取得 |
+
+### wifi-cam-mcp（目・首）
+
+| ツール | 説明 |
+|--------|------|
+| `see` | カメラで静止画を撮影して返す |
+| `look_left/right/up/down` | カメラをパン・チルト操作する |
+| `look_around` | 複数方向に向けて画像を撮影する |
+| `camera_presets` | プリセット位置一覧を取得 |
+| `camera_go_to_preset` | プリセット位置に移動 |
+| `listen` | カメラのマイクから音声を録音する |
+| `camera_info` | カメラのデバイス情報を取得 |
 
 ## 環境変数
 
@@ -100,11 +129,6 @@ Claude: (スピーカー)「会話モードを終了します。」
 | `WHISPER_MODEL` | モデルサイズ (`tiny` / `base` / `small` / `medium`) | `small` |
 | `WHISPER_LANGUAGE` | 認識言語 | `ja` |
 | `AUDIO_DEVICE` | 入力デバイスインデックス | システムデフォルト |
-| `AUDIO_SAMPLE_RATE` | サンプリングレート (Hz) | `16000` |
-| `LISTEN_DEFAULT_DURATION` | デフォルト録音秒数 | `5` |
-| `LISTEN_MAX_DURATION` | 最大録音秒数 | `30` |
-| `VAD_SILENCE_DURATION` | 無音判定秒数 | `2.0` |
-| `VAD_SILENCE_THRESHOLD` | 無音判定閾値 (RMS) | `500` |
 
 ### audio-speak-mcp
 
@@ -112,7 +136,7 @@ Claude: (スピーカー)「会話モードを終了します。」
 |------|------|-----------|
 | `TTS_ENGINE` | TTS エンジン (`macos` / `kokoro` / `elevenlabs`) | `macos` |
 | `TTS_VOICE` | macOS の音声名 | `Kyoko` |
-| `TTS_RATE` | 発話速度 (words per minute) | システムデフォルト |
+| `TTS_RATE` | 発話速度 (wpm) | システムデフォルト |
 | `KOKORO_VOICE` | Kokoro 音声プリセット | `jf_alpha` |
 | `KOKORO_MODEL_ID` | Kokoro モデル ID | `mlx-community/Kokoro-82M-bf16` |
 | `KOKORO_SPEED` | Kokoro 発話速度倍率 | `1.0` |
@@ -120,43 +144,56 @@ Claude: (スピーカー)「会話モードを終了します。」
 | `ELEVENLABS_API_KEY` | ElevenLabs API キー | 未設定時は macOS にフォールバック |
 | `ELEVENLABS_VOICE_ID` | ElevenLabs 音声 ID | — |
 | `ELEVENLABS_MODEL_ID` | ElevenLabs モデル ID | `eleven_v3` |
+| `TAPO_CAMERA_HOST` | カメラの IP アドレス | — |
+| `TAPO_USERNAME` | カメラのローカルアカウント名（RTSP / ONVIF 認証用） | — |
+| `TAPO_PASSWORD` | カメラのローカルアカウントパスワード（RTSP / ONVIF 認証用） | — |
+| `TAPO_CLOUD_PASSWORD` | TP-Link クラウドパスワード（`tapo://` バックチャンネル音声出力用） | — |
+| `GO2RTC_API_URL` | go2rtc API URL | `http://localhost:1984` |
+| `GO2RTC_STREAM_NAME` | go2rtc ストリーム名 | `camera` |
+
+> **認証情報が 2 種類ある理由**: Tapo C210 はカメラスピーカーへの音声出力に
+> `tapo://` という独自プロトコル（ポート 8800）を使う。このプロトコルは RTSP / ONVIF
+> とは異なる認証を要求し、TP-Link クラウドパスワードが必要になる。
+> RTSP / ONVIF はカメラのローカルアカウントで認証する。
+
+### wifi-cam-mcp
+
+| 変数 | 説明 | デフォルト |
+|------|------|-----------|
+| `CAMERA_HOST` | カメラの IP アドレス | — |
+| `CAMERA_USERNAME` | カメラのローカルアカウント名 | — |
+| `CAMERA_PASSWORD` | カメラのローカルアカウントパスワード | — |
+| `CAMERA_ONVIF_PORT` | ONVIF ポート番号 | `2020` |
+| `CAMERA_MOUNT_MODE` | 設置方向 (`desk` / `ceiling`) | `desk` |
 
 #### TTS エンジン比較
 
 | エンジン | 品質 | レイテンシ | 備考 |
 |----------|------|-----------|------|
 | macOS (`macos`) | 低 | 即時 | OS 標準の `say` コマンド |
-| Kokoro (`kokoro`) | 中 | 2-3 秒 | Apple Silicon ローカル推論。`mpv` が必要 |
-| ElevenLabs (`elevenlabs`) | 高 | 10-30 秒 | クラウド API。API キーと `mpv` が必要 |
-
-## 設計上の特徴
-
-- **関心の分離** — 音声入力と音声出力を独立した MCP サーバーに分離。依存関係が異なり、片方だけの利用も可能
-- **エンジン抽象化** — Whisper (mlx / pytorch) と TTS (macOS say / Kokoro / ElevenLabs) を抽象レイヤで切り替え可能
-- **グレースフルフォールバック** — mlx-whisper が使えなければ PyTorch 版に自動フォールバック。ElevenLabs の API キーがなければ macOS say にフォールバック
-- **遅延ロード** — Whisper モデルは初回使用時に 1 回だけロード。embodied-claude の毎回ロードする設計を改善
-- **VAD (Voice Activity Detection)** — 発話終了を検知して自動停止。固定秒数の録音も選択可能
-- **セキュリティ** — 音声テキストは一時ファイル経由で渡し、シェルインジェクションを防止
+| Kokoro (`kokoro`) | 中 | 2-3 秒 | Apple Silicon ローカル推論 |
+| ElevenLabs (`elevenlabs`) | 高 | 10-30 秒 | クラウド API。API キーが必要 |
 
 ## トラブルシューティング
 
 ### マイクが認識されない
 
 ```bash
-# デバイス一覧を確認
 ffmpeg -f avfoundation -list_devices true -i ""
 ```
 
 表示されたオーディオデバイスのインデックスを `AUDIO_DEVICE` に設定する。
 
-### Whisper モデルのダウンロードに時間がかかる
+### カメラスピーカーから音が出ない
 
-初回起動時にモデルがダウンロードされる（small モデルで約 500MB）。2 回目以降はキャッシュされる。
+go2rtc のログを確認する:
+
+```bash
+cat /tmp/go2rtc.log
+```
+
+`tapo://` の認証失敗が出ている場合は `TAPO_CLOUD_PASSWORD` が正しくない。TP-Link アプリのアカウントパスワードを設定する（カメラのローカルパスワードではない）。
 
 ### メモリ不足
 
-8GB メモリ環境では `small` モデルが上限。`WHISPER_MODEL=tiny` または `WHISPER_MODEL=base` に変更すると軽量化できる（認識精度は低下する）。
-
-## 背景
-
-このプロジェクトは [kmizu/embodied-claude](https://github.com/kmizu/embodied-claude) を調査・分析した結果に基づいている。embodied-claude は Wi-Fi カメラ（TP-Link Tapo）を使って Claude Code に目・首・耳・声・脳を与えるプロジェクトであり、本プロジェクトはそこからカメラ関連を除外し、ローカル PC の音声入出力に特化して再設計したものである。
+8GB メモリ環境では `WHISPER_MODEL=tiny` または `WHISPER_MODEL=base` に変更すると軽量化できる。
