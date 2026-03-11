@@ -16,6 +16,68 @@ from .config import ListenConfig
 logger = logging.getLogger(__name__)
 
 
+async def _run_vad_capture(
+    proc: asyncio.subprocess.Process,
+    sample_rate: int,
+    silence_duration: float,
+    silence_threshold: int,
+) -> str:
+    """Read PCM data from proc.stdout, detect end-of-speech via VAD, save as WAV.
+
+    The caller is responsible for launching the process and its cleanup on error.
+    """
+    chunk_duration = 0.1  # 100ms chunks
+    chunk_bytes = int(sample_rate * 2 * chunk_duration)
+
+    audio_chunks: list[bytes] = []
+    speech_detected = False
+    silence_start: float | None = None
+
+    try:
+        while True:
+            chunk = await proc.stdout.read(chunk_bytes)
+            if not chunk:
+                break
+            audio_chunks.append(chunk)
+            n_samples = len(chunk) // 2
+            if n_samples == 0:
+                continue
+            samples = struct.unpack(f"<{n_samples}h", chunk[:n_samples * 2])
+            rms = math.sqrt(sum(s * s for s in samples) / n_samples)
+            if rms >= silence_threshold:
+                if not speech_detected:
+                    logger.info("Speech detected (RMS=%.0f)", rms)
+                speech_detected = True
+                silence_start = None
+            elif speech_detected:
+                if silence_start is None:
+                    silence_start = asyncio.get_event_loop().time()
+                elapsed = asyncio.get_event_loop().time() - silence_start
+                if elapsed >= silence_duration:
+                    logger.info("Silence for %.1fs after speech, stopping", elapsed)
+                    break
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+            await proc.wait()
+
+    if not audio_chunks:
+        raise RuntimeError("No audio data captured")
+
+    pcm_data = b"".join(audio_chunks)
+    fd, wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm_data)
+
+    actual_duration = len(pcm_data) / (sample_rate * 2)
+    logger.info("Recorded %.1fs to %s", actual_duration, wav_path)
+    return wav_path
+
+
 class AudioCapture:
     """Captures audio from the local microphone via ffmpeg."""
 
@@ -113,63 +175,7 @@ class AudioCapture:
             stderr=asyncio.subprocess.PIPE,
         )
 
-        audio_chunks: list[bytes] = []
-        speech_detected = False
-        silence_start: float | None = None
-
-        try:
-            while True:
-                chunk = await proc.stdout.read(chunk_bytes)
-                if not chunk:
-                    break
-
-                audio_chunks.append(chunk)
-
-                # Calculate RMS amplitude
-                n_samples = len(chunk) // 2
-                if n_samples == 0:
-                    continue
-                samples = struct.unpack(f"<{n_samples}h", chunk[:n_samples * 2])
-                rms = math.sqrt(sum(s * s for s in samples) / n_samples)
-
-                if rms >= silence_threshold:
-                    # Speech detected
-                    if not speech_detected:
-                        logger.info("Speech detected (RMS=%.0f)", rms)
-                    speech_detected = True
-                    silence_start = None
-                elif speech_detected:
-                    # Silence after speech
-                    if silence_start is None:
-                        silence_start = asyncio.get_event_loop().time()
-                    elapsed = asyncio.get_event_loop().time() - silence_start
-                    if elapsed >= silence_duration:
-                        logger.info(
-                            "Silence for %.1fs after speech, stopping", elapsed
-                        )
-                        break
-        finally:
-            if proc.returncode is None:
-                proc.terminate()
-                await proc.wait()
-
-        if not audio_chunks:
-            raise RuntimeError("No audio data captured")
-
-        # Write collected PCM data as WAV
-        pcm_data = b"".join(audio_chunks)
-        fd, wav_path = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
-
-        with wave.open(wav_path, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit
-            wf.setframerate(sample_rate)
-            wf.writeframes(pcm_data)
-
-        actual_duration = len(pcm_data) / (sample_rate * 2)
-        logger.info("Recorded %.1fs to %s", actual_duration, wav_path)
-        return wav_path
+        return await _run_vad_capture(proc, sample_rate, silence_duration, silence_threshold)
 
     async def list_devices(self) -> list[dict[str, str]]:
         """List available audio input devices using ffmpeg avfoundation.
@@ -211,3 +217,88 @@ class AudioCapture:
                     break
 
         return devices
+
+
+class TapoAudioCapture:
+    """Captures audio from Tapo camera microphone via RTSP stream."""
+
+    def __init__(self, config: "ListenConfig") -> None:
+        self._config = config
+
+    def _rtsp_url(self) -> str:
+        host = self._config.tapo_host or "192.168.0.1"
+        user = self._config.tapo_username or "admin"
+        pw = self._config.tapo_password or ""
+        return f"rtsp://{user}:{pw}@{host}:554/stream1"
+
+    def _masked_url(self) -> str:
+        host = self._config.tapo_host or "192.168.0.1"
+        return f"rtsp://****@{host}:554/stream1"
+
+    def _base_cmd(self) -> list[str]:
+        return [
+            "ffmpeg", "-y",
+            "-analyzeduration", "0",
+            "-fflags", "nobuffer",
+            "-rtsp_transport", "tcp",
+            "-i", self._rtsp_url(),
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", str(self._config.sample_rate),
+            "-ac", "1",
+        ]
+
+    async def record(self, duration: int) -> str:
+        """Record audio from RTSP stream for a fixed duration."""
+        fd, wav_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        cmd = self._base_cmd() + ["-t", str(duration), wav_path]
+        logger.info("Recording %ds from Tapo camera %s", duration, self._masked_url())
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=duration + 15)
+        except asyncio.TimeoutError:
+            proc.terminate()
+            await proc.wait()
+            raise RuntimeError("ffmpeg RTSP recording timed out")
+        if proc.returncode != 0:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"ffmpeg RTSP recording failed: {stderr.decode(errors='replace').strip()}"
+            )
+        return wav_path
+
+    async def record_with_vad(
+        self,
+        max_duration: int,
+        silence_duration: float,
+        silence_threshold: int,
+    ) -> str:
+        """Record audio from RTSP stream with Voice Activity Detection."""
+        cmd = self._base_cmd() + [
+            "-t", str(max_duration),
+            "-f", "s16le", "pipe:1",
+        ]
+        logger.info(
+            "Recording with VAD from Tapo camera %s (max=%ds)",
+            self._masked_url(), max_duration,
+        )
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return await _run_vad_capture(
+            proc, self._config.sample_rate, silence_duration, silence_threshold
+        )
+
+    async def list_devices(self) -> list[dict[str, str]]:
+        """Return camera info as a single-item device list."""
+        return [{"index": "tapo", "name": f"Tapo Camera ({self._config.tapo_host})"}]

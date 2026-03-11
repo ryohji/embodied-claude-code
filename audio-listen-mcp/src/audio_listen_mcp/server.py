@@ -13,7 +13,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from .capture import AudioCapture
+from .capture import AudioCapture, TapoAudioCapture
 from .config import ListenConfig
 from .transcribe import create_engine
 
@@ -26,7 +26,12 @@ class AudioListenMCPServer:
     def __init__(self) -> None:
         self._server = Server("audio-listen-mcp")
         self._config = ListenConfig.from_env()
-        self._capture = AudioCapture(self._config)
+        if self._config.use_tapo_audio:
+            self._capture = TapoAudioCapture(self._config)
+            logger.info("Audio input: Tapo camera RTSP (%s)", self._config.tapo_host)
+        else:
+            self._capture = AudioCapture(self._config)
+            logger.info("Audio input: local microphone (avfoundation)")
         self._engine = None  # Lazy-loaded Whisper engine
         self._setup_handlers()
 
