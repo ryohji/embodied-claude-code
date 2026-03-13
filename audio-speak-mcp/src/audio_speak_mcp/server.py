@@ -105,7 +105,7 @@ class AudioSpeakMCPServer:
                             )
                         voice = arguments.get("voice")
                         rate = arguments.get("rate")
-                        output = arguments.get("output", "pc")
+                        output = arguments.get("output", self._config.default_audio_output)
                         engine = self._ensure_engine()
                         result = await engine.say(text, voice=voice, rate=rate, output=output)
                         if result.startswith("発話完了"):

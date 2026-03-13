@@ -28,6 +28,7 @@ class SpeakConfig:
     tapo_cloud_password: str | None
     go2rtc_api_url: str
     go2rtc_stream_name: str
+    default_audio_output: str
 
     @classmethod
     def from_env(cls) -> SpeakConfig:
@@ -58,4 +59,5 @@ class SpeakConfig:
             tapo_cloud_password=os.getenv("TAPO_CLOUD_PASSWORD"),
             go2rtc_api_url=os.getenv("GO2RTC_API_URL", "http://localhost:1984"),
             go2rtc_stream_name=os.getenv("GO2RTC_STREAM_NAME", "camera"),
+            default_audio_output=os.getenv("DEFAULT_AUDIO_OUTPUT", "pc"),
         )
