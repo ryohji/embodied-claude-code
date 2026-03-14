@@ -21,27 +21,11 @@ class AudioSpeakMCPServer:
         self._server = Server("audio-speak-mcp")
         self._config = SpeakConfig.from_env()
         self._engine: TTSEngine | None = None
-        self._go2rtc = None
-        if self._config.tapo_camera_host:
-            from .go2rtc import Go2RTCProcess
-            cloud_password = (
-                self._config.tapo_cloud_password
-                or self._config.tapo_password
-                or ""
-            )
-            self._go2rtc = Go2RTCProcess(
-                camera_host=self._config.tapo_camera_host,
-                username=self._config.tapo_username or "",
-                password=self._config.tapo_password or "",
-                cloud_password=cloud_password,
-                api_url=self._config.go2rtc_api_url,
-                stream_name=self._config.go2rtc_stream_name,
-            )
         self._setup_handlers()
 
     def _ensure_engine(self) -> TTSEngine:
         if self._engine is None:
-            self._engine = create_engine(self._config, go2rtc_process=self._go2rtc)
+            self._engine = create_engine(self._config)
         return self._engine
 
     def _setup_handlers(self) -> None:
@@ -67,12 +51,6 @@ class AudioSpeakMCPServer:
                             "rate": {
                                 "type": "integer",
                                 "description": "発話速度（words per minute）。省略時はデフォルト速度",
-                            },
-                            "output": {
-                                "type": "string",
-                                "enum": ["pc", "camera"],
-                                "description": "音声出力先。'pc' はPCスピーカー（デフォルト）、'camera' はTapo C210のスピーカー",
-                                "default": "pc",
                             },
                         },
                         "required": ["text"],
@@ -105,9 +83,8 @@ class AudioSpeakMCPServer:
                             )
                         voice = arguments.get("voice")
                         rate = arguments.get("rate")
-                        output = arguments.get("output", self._config.default_audio_output)
                         engine = self._ensure_engine()
-                        result = await engine.say(text, voice=voice, rate=rate, output=output)
+                        result = await engine.say(text, voice=voice, rate=rate)
                         if result.startswith("発話完了"):
                             return CallToolResult(
                                 content=[],
@@ -157,16 +134,12 @@ class AudioSpeakMCPServer:
                 return [TextContent(type="text", text=f"エラー: {e!s}")]
 
     async def run(self) -> None:
-        try:
-            async with stdio_server() as (read_stream, write_stream):
-                await self._server.run(
-                    read_stream,
-                    write_stream,
-                    self._server.create_initialization_options(),
-                )
-        finally:
-            if self._go2rtc is not None:
-                self._go2rtc.stop()
+        async with stdio_server() as (read_stream, write_stream):
+            await self._server.run(
+                read_stream,
+                write_stream,
+                self._server.create_initialization_options(),
+            )
 
 
 def main() -> None:

@@ -23,7 +23,6 @@ class TTSEngine(ABC):
         text: str,
         voice: str | None = None,
         rate: int | None = None,
-        output: str = "pc",
     ) -> str:
         """Speak the given text. Returns a status message."""
         ...
@@ -41,18 +40,15 @@ class MacOSTTSEngine(TTSEngine):
         self,
         default_voice: str,
         default_rate: int | None,
-        go2rtc_process=None,
     ) -> None:
         self._default_voice = default_voice
         self._default_rate = default_rate
-        self._go2rtc = go2rtc_process
 
     async def say(
         self,
         text: str,
         voice: str | None = None,
         rate: int | None = None,
-        output: str = "pc",
     ) -> str:
         voice = voice or self._default_voice
         rate = rate or self._default_rate
@@ -63,35 +59,6 @@ class MacOSTTSEngine(TTSEngine):
         ) as f:
             f.write(text)
             text_file = f.name
-
-        if output == "camera":
-            if self._go2rtc is None:
-                return "カメラスピーカー出力が設定されていません（TAPO_CAMERA_HOST を設定してください）"
-            if not shutil.which("ffmpeg"):
-                return "ffmpeg が見つかりません。brew install ffmpeg でインストールしてください。"
-            audio_file = tempfile.mktemp(suffix=".aiff")
-            try:
-                cmd = ["say", "-v", voice, "-o", audio_file]
-                if rate is not None:
-                    cmd.extend(["-r", str(rate)])
-                cmd.extend(["-f", text_file])
-                logger.info("Running: %s", " ".join(cmd))
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr = await proc.communicate()
-                if proc.returncode != 0:
-                    err = stderr.decode().strip()
-                    return f"say コマンドがエラーを返しました (code {proc.returncode}): {err}"
-                from .playback import play_with_go2rtc
-                await self._go2rtc.start()
-                await play_with_go2rtc(audio_file, self._go2rtc)
-                return f"発話完了（macOS→camera, voice={voice}, {len(text)}文字）"
-            finally:
-                Path(text_file).unlink(missing_ok=True)
-                Path(audio_file).unlink(missing_ok=True)
 
         try:
             cmd = ["say", "-v", voice]
@@ -155,19 +122,16 @@ class ElevenLabsTTSEngine(TTSEngine):
         api_key: str,
         default_voice_id: str | None,
         model_id: str,
-        go2rtc_process=None,
     ) -> None:
         self._api_key = api_key
         self._default_voice_id = default_voice_id
         self._model_id = model_id
-        self._go2rtc = go2rtc_process
 
     async def say(
         self,
         text: str,
         voice: str | None = None,
         rate: int | None = None,
-        output: str = "pc",
     ) -> str:
         try:
             from elevenlabs import ElevenLabs
@@ -199,16 +163,6 @@ class ElevenLabsTTSEngine(TTSEngine):
                 for chunk in audio_generator:
                     f.write(chunk)
                 audio_path = f.name
-
-            if output == "camera":
-                if self._go2rtc is None:
-                    Path(audio_path).unlink(missing_ok=True)
-                    return "カメラスピーカー出力が設定されていません（TAPO_CAMERA_HOST を設定してください）"
-                from .playback import play_with_go2rtc
-                await self._go2rtc.start()
-                await play_with_go2rtc(audio_path, self._go2rtc)
-                Path(audio_path).unlink(missing_ok=True)
-                return f"発話完了（ElevenLabs→camera, voice_id={voice_id}, {len(text)}文字）"
 
             # Play with mpv
             proc = await asyncio.create_subprocess_exec(
@@ -254,14 +208,12 @@ class KokoroTTSEngine(TTSEngine):
         model_id: str,
         default_speed: float,
         default_lang_code: str,
-        go2rtc_process=None,
     ) -> None:
         self._default_voice = default_voice
         self._model_id = model_id
         self._default_speed = default_speed
         self._default_lang_code = default_lang_code
         self._model = None
-        self._go2rtc = go2rtc_process
 
     def _ensure_model(self):
         if self._model is None:
@@ -277,7 +229,6 @@ class KokoroTTSEngine(TTSEngine):
         text: str,
         voice: str | None = None,
         rate: int | None = None,
-        output: str = "pc",
     ) -> str:
         try:
             import mlx_audio  # noqa: F401
@@ -320,16 +271,6 @@ class KokoroTTSEngine(TTSEngine):
                 sf.write(f.name, audio_data, 24000)
                 audio_path = f.name
 
-            if output == "camera":
-                if self._go2rtc is None:
-                    Path(audio_path).unlink(missing_ok=True)
-                    return "カメラスピーカー出力が設定されていません（TAPO_CAMERA_HOST を設定してください）"
-                from .playback import play_with_go2rtc
-                await self._go2rtc.start()
-                await play_with_go2rtc(audio_path, self._go2rtc)
-                Path(audio_path).unlink(missing_ok=True)
-                return f"発話完了（Kokoro→camera, voice={voice}, {len(text)}文字）"
-
             # Play with mpv
             proc = await asyncio.create_subprocess_exec(
                 "mpv", "--no-video", "--really-quiet", audio_path,
@@ -362,7 +303,7 @@ class KokoroTTSEngine(TTSEngine):
         ]
 
 
-def create_engine(config: SpeakConfig, go2rtc_process=None) -> TTSEngine:
+def create_engine(config: SpeakConfig) -> TTSEngine:
     """Create a TTS engine based on configuration."""
     if config.tts_engine == "elevenlabs":
         if config.elevenlabs_api_key:
@@ -371,7 +312,6 @@ def create_engine(config: SpeakConfig, go2rtc_process=None) -> TTSEngine:
                 api_key=config.elevenlabs_api_key,
                 default_voice_id=config.elevenlabs_voice_id,
                 model_id=config.elevenlabs_model_id,
-                go2rtc_process=go2rtc_process,
             )
         else:
             logger.warning(
@@ -389,12 +329,10 @@ def create_engine(config: SpeakConfig, go2rtc_process=None) -> TTSEngine:
             model_id=config.kokoro_model_id,
             default_speed=config.kokoro_speed,
             default_lang_code=config.kokoro_lang_code,
-            go2rtc_process=go2rtc_process,
         )
 
     logger.info("Using macOS TTS engine (voice=%s)", config.tts_voice)
     return MacOSTTSEngine(
         default_voice=config.tts_voice,
         default_rate=config.tts_rate,
-        go2rtc_process=go2rtc_process,
     )

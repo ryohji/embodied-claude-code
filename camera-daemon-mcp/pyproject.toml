@@ -1,0 +1,19 @@
+[project]
+name = "camera-daemon-mcp"
+version = "0.1.0"
+description = "MCP server that manages go2rtc lifecycle for Tapo camera streaming"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+camera-daemon-mcp = "camera_daemon_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/camera_daemon_mcp"]
