@@ -1,4 +1,4 @@
-"""MCP Server that manages go2rtc lifecycle for Tapo camera streaming."""
+"""MCP Server that manages go2rtc lifecycle and provides HTTP API for camera access."""
 
 from __future__ import annotations
 
@@ -11,15 +11,18 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from aiohttp import web
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, ImageContent, TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from .camera import TapoCamera
 from .config import CameraConfig, ServerConfig
 from .go2rtc import Go2RTCProcess
 
 logger = logging.getLogger(__name__)
+
+HTTP_PORT = int(os.environ.get("HTTP_PORT", "8080"))
 
 
 class CameraDaemonMCPServer:
@@ -33,276 +36,126 @@ class CameraDaemonMCPServer:
         )
         self._server_config = ServerConfig.from_env()
         self._camera: TapoCamera | None = None
-        self._setup_handlers()
+        self._setup_mcp_handlers()
 
-    def _setup_handlers(self) -> None:
+    def _setup_mcp_handlers(self) -> None:
         @self._server.list_tools()
         async def list_tools() -> list[Tool]:
-            return [
-                Tool(
-                    name="get_stream_url",
-                    description=(
-                        "go2rtc の API URL とストリーム名を返す。"
-                        "他の MCP が go2rtc エンドポイントを知るための窓口。"
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
-                ),
-                Tool(
-                    name="say_to_camera",
-                    description=(
-                        "テキストをカメラのスピーカーから発話する。"
-                        "macOS say コマンドで音声生成し、go2rtc バックチャンネル経由でカメラスピーカーに送出する。"
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "text": {
-                                "type": "string",
-                                "description": "発話するテキスト",
-                            },
-                            "voice": {
-                                "type": "string",
-                                "description": "音声名（省略時は Kyoko）",
-                            },
-                            "rate": {
-                                "type": "integer",
-                                "description": "発話速度 WPM（省略時はデフォルト）",
-                            },
-                        },
-                        "required": ["text"],
-                    },
-                ),
-                Tool(
-                    name="see",
-                    description="カメラで現在の映像を撮影して返す。",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="look_left",
-                    description="カメラを左に向ける（パン）。",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "degrees": {
-                                "type": "integer",
-                                "description": "移動量（度）、デフォルト30",
-                                "default": 30,
-                                "minimum": 1,
-                                "maximum": 90,
-                            }
-                        },
-                        "required": [],
-                    },
-                ),
-                Tool(
-                    name="look_right",
-                    description="カメラを右に向ける（パン）。",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "degrees": {
-                                "type": "integer",
-                                "description": "移動量（度）、デフォルト30",
-                                "default": 30,
-                                "minimum": 1,
-                                "maximum": 90,
-                            }
-                        },
-                        "required": [],
-                    },
-                ),
-                Tool(
-                    name="look_up",
-                    description="カメラを上に向ける（チルト）。",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "degrees": {
-                                "type": "integer",
-                                "description": "移動量（度）、デフォルト20",
-                                "default": 20,
-                                "minimum": 1,
-                                "maximum": 90,
-                            }
-                        },
-                        "required": [],
-                    },
-                ),
-                Tool(
-                    name="look_down",
-                    description="カメラを下に向ける（チルト）。",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "degrees": {
-                                "type": "integer",
-                                "description": "移動量（度）、デフォルト20",
-                                "default": 20,
-                                "minimum": 1,
-                                "maximum": 90,
-                            }
-                        },
-                        "required": [],
-                    },
-                ),
-                Tool(
-                    name="look_around",
-                    description="複数の角度から部屋を撮影して返す。",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="camera_info",
-                    description="カメラデバイス情報を取得する。",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="camera_presets",
-                    description="保存済みカメラプリセット一覧を取得する。",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="camera_go_to_preset",
-                    description="指定したプリセットにカメラを移動する。",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "preset_id": {
-                                "type": "string",
-                                "description": "プリセットID",
-                            }
-                        },
-                        "required": ["preset_id"],
-                    },
-                ),
-            ]
+            return []  # ツールは公開しない（HTTP API 経由でのみアクセス）
 
-        @self._server.call_tool()
-        async def call_tool(
-            name: str, arguments: dict[str, Any]
-        ) -> list[TextContent]:
-            try:
-                match name:
-                    case "get_stream_url":
-                        return CallToolResult(
-                            content=[],
-                            structuredContent={
-                                "url": self._go2rtc.api_url,
-                                "stream": self._go2rtc.stream_name,
-                            },
-                        )
-                    case "say_to_camera":
-                        text = arguments.get("text", "")
-                        voice = arguments.get("voice", "Kyoko")
-                        rate = arguments.get("rate")
-                        if not shutil.which("ffmpeg"):
-                            return [TextContent(type="text", text="ffmpeg が見つかりません")]
-                        audio_file = tempfile.mktemp(suffix=".aiff")
-                        text_file = tempfile.mktemp(suffix=".txt")
-                        try:
-                            Path(text_file).write_text(text, encoding="utf-8")
-                            cmd = ["say", "-v", voice, "-o", audio_file]
-                            if rate is not None:
-                                cmd.extend(["-r", str(rate)])
-                            cmd.extend(["-f", text_file])
-                            proc = await asyncio.create_subprocess_exec(
-                                *cmd,
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.PIPE,
-                            )
-                            _, stderr = await proc.communicate()
-                            if proc.returncode != 0:
-                                return [TextContent(type="text", text=f"say エラー: {stderr.decode().strip()}")]
-                            from .playback import play_with_go2rtc
-                            await play_with_go2rtc(audio_file, self._go2rtc)
-                            return CallToolResult(
-                                content=[],
-                                structuredContent={"status": "spoken", "text": text, "voice": voice},
-                            )
-                        finally:
-                            Path(text_file).unlink(missing_ok=True)
-                            Path(audio_file).unlink(missing_ok=True)
+    # --- HTTP ハンドラ ---
 
-                    case "see":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        result = await self._camera.capture_image()
-                        return [
-                            ImageContent(type="image", data=result.image_base64, mimeType="image/jpeg"),
-                            TextContent(type="text", text=f"撮影: {result.timestamp} ({result.width}x{result.height})"),
-                        ]
+    async def _handle_see(self, request: web.Request) -> web.Response:
+        if self._camera is None:
+            return web.Response(status=503, text="カメラ未接続")
+        result = await self._camera.capture_image()
+        return web.json_response({
+            "image": result.image_base64,
+            "mime_type": "image/jpeg",
+            "width": result.width,
+            "height": result.height,
+            "timestamp": result.timestamp,
+        })
 
-                    case "look_left":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        degrees = arguments.get("degrees", 30)
-                        await self._camera.pan_left(degrees)
-                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "left", "degrees": degrees})
+    async def _handle_ptz(self, request: web.Request) -> web.Response:
+        if self._camera is None:
+            return web.Response(status=503, text="カメラ未接続")
+        body = await request.json()
+        direction = body.get("direction", "")
+        degrees = body.get("degrees", 30)
+        match direction:
+            case "left":
+                await self._camera.pan_left(degrees)
+            case "right":
+                await self._camera.pan_right(degrees)
+            case "up":
+                await self._camera.tilt_up(degrees)
+            case "down":
+                await self._camera.tilt_down(degrees)
+            case _:
+                return web.Response(status=400, text=f"不明な direction: {direction}")
+        return web.json_response({"status": "moved", "direction": direction, "degrees": degrees})
 
-                    case "look_right":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        degrees = arguments.get("degrees", 30)
-                        await self._camera.pan_right(degrees)
-                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "right", "degrees": degrees})
+    async def _handle_look_around(self, request: web.Request) -> web.Response:
+        if self._camera is None:
+            return web.Response(status=503, text="カメラ未接続")
+        captures = await self._camera.look_around()
+        directions = ["Center", "Left", "Right", "Up"]
+        result = []
+        for i, capture in enumerate(captures):
+            result.append({
+                "image": capture.image_base64,
+                "mime_type": "image/jpeg",
+                "direction": directions[i] if i < len(directions) else f"Angle {i}",
+            })
+        return web.json_response({"captures": result})
 
-                    case "look_up":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        degrees = arguments.get("degrees", 20)
-                        await self._camera.tilt_up(degrees)
-                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "up", "degrees": degrees})
+    async def _handle_info(self, request: web.Request) -> web.Response:
+        if self._camera is None:
+            return web.Response(status=503, text="カメラ未接続")
+        info = await self._camera.get_device_info()
+        return web.json_response(info)
 
-                    case "look_down":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        degrees = arguments.get("degrees", 20)
-                        await self._camera.tilt_down(degrees)
-                        return CallToolResult(content=[], structuredContent={"status": "moved", "direction": "down", "degrees": degrees})
+    async def _handle_presets(self, request: web.Request) -> web.Response:
+        if self._camera is None:
+            return web.Response(status=503, text="カメラ未接続")
+        presets = await self._camera.get_presets()
+        return web.json_response(presets)
 
-                    case "look_around":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        captures = await self._camera.look_around()
-                        contents = []
-                        directions = ["Center", "Left", "Right", "Up"]
-                        for i, capture in enumerate(captures):
-                            direction = directions[i] if i < len(directions) else f"Angle {i}"
-                            contents.append(TextContent(type="text", text=f"--- {direction} ---"))
-                            contents.append(ImageContent(type="image", data=capture.image_base64, mimeType="image/jpeg"))
-                        contents.append(TextContent(type="text", text=f"{len(captures)}枚撮影完了"))
-                        return contents
+    async def _handle_go_to_preset(self, request: web.Request) -> web.Response:
+        if self._camera is None:
+            return web.Response(status=503, text="カメラ未接続")
+        preset_id = request.match_info["preset_id"]
+        await self._camera.go_to_preset(preset_id)
+        return web.json_response({"status": "moved", "preset_id": preset_id})
 
-                    case "camera_info":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        info = await self._camera.get_device_info()
-                        return [TextContent(type="text", text=f"カメラ情報:\n{json.dumps(info, indent=2, ensure_ascii=False)}")]
+    async def _handle_say_to_camera(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        text = body.get("text", "")
+        voice = body.get("voice", "Kyoko")
+        rate = body.get("rate")
+        if not shutil.which("ffmpeg"):
+            return web.Response(status=500, text="ffmpeg が見つかりません")
+        audio_file = tempfile.mktemp(suffix=".aiff")
+        text_file = tempfile.mktemp(suffix=".txt")
+        try:
+            Path(text_file).write_text(text, encoding="utf-8")
+            cmd = ["say", "-v", voice, "-o", audio_file]
+            if rate is not None:
+                cmd.extend(["-r", str(rate)])
+            cmd.extend(["-f", text_file])
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                return web.Response(status=500, text=f"say エラー: {stderr.decode().strip()}")
+            from .playback import play_with_go2rtc
+            await play_with_go2rtc(audio_file, self._go2rtc)
+            return web.json_response({"status": "spoken", "text": text, "voice": voice})
+        finally:
+            Path(text_file).unlink(missing_ok=True)
+            Path(audio_file).unlink(missing_ok=True)
 
-                    case "camera_presets":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        presets = await self._camera.get_presets()
-                        return [TextContent(type="text", text=f"プリセット:\n{json.dumps(presets, indent=2, ensure_ascii=False)}")]
+    async def _handle_stream_url(self, request: web.Request) -> web.Response:
+        return web.json_response({
+            "url": self._go2rtc.api_url,
+            "stream": self._go2rtc.stream_name,
+        })
 
-                    case "camera_go_to_preset":
-                        if self._camera is None:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        preset_id = arguments.get("preset_id", "")
-                        await self._camera.go_to_preset(preset_id)
-                        return CallToolResult(content=[], structuredContent={"status": "moved", "preset_id": preset_id})
-
-                    case _:
-                        return [TextContent(
-                            type="text",
-                            text=f"不明なツール: {name}",
-                        )]
-            except Exception as e:
-                logger.exception("Error in tool %s", name)
-                return [TextContent(type="text", text=f"エラー: {e!s}")]
+    def _make_app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_get("/see", self._handle_see)
+        app.router.add_post("/ptz", self._handle_ptz)
+        app.router.add_get("/look_around", self._handle_look_around)
+        app.router.add_get("/info", self._handle_info)
+        app.router.add_get("/presets", self._handle_presets)
+        app.router.add_post("/preset/{preset_id}", self._handle_go_to_preset)
+        app.router.add_post("/say", self._handle_say_to_camera)
+        app.router.add_get("/stream_url", self._handle_stream_url)
+        return app
 
     async def run(self) -> None:
         await self._go2rtc.start()
@@ -313,6 +166,15 @@ class CameraDaemonMCPServer:
         except Exception as e:
             logger.warning("Camera connection failed: %s", e)
             self._camera = None
+
+        # HTTP サーバーと MCP stdio を並行起動
+        app = self._make_app()
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "localhost", HTTP_PORT)
+        await site.start()
+        logger.info("HTTP server listening on http://localhost:%d", HTTP_PORT)
+
         try:
             async with stdio_server() as (read_stream, write_stream):
                 await self._server.run(
@@ -321,6 +183,7 @@ class CameraDaemonMCPServer:
                     self._server.create_initialization_options(),
                 )
         finally:
+            await runner.cleanup()
             self._go2rtc.stop()
             if self._camera is not None:
                 await self._camera.disconnect()

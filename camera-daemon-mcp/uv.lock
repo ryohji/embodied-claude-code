@@ -199,6 +199,7 @@ name = "camera-daemon-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "httpx" },
     { name = "mcp", extra = ["cli"] },
     { name = "onvif-zeep-async" },
@@ -209,6 +210,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9" },
     { name = "httpx", specifier = ">=0.24" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.0.0" },
     { name = "onvif-zeep-async", specifier = ">=0.2.12" },
