@@ -82,7 +82,8 @@ class AudioSpeakMCPServer:
                                 isError=True,
                             )
                         voice = arguments.get("voice")
-                        rate = arguments.get("rate")
+                        _rate_raw = arguments.get("rate")
+                        rate = int(_rate_raw) if _rate_raw is not None else None
                         engine = self._ensure_engine()
                         result = await engine.say(text, voice=voice, rate=rate)
                         if result.startswith("発話完了"):

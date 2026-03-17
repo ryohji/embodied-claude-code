@@ -157,7 +157,8 @@ class EchoBufferMCPServer:
                         )
 
                     case "echo_freeze":
-                        enabled = bool(arguments.get("enabled", True))
+                        _enabled_raw = arguments.get("enabled", True)
+                        enabled = str(_enabled_raw).lower() not in ("false", "0", "no")
                         self._buffer.freeze(enabled)
                         return CallToolResult(
                             content=[],

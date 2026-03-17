@@ -119,25 +119,25 @@ class WifiCamMCPServer:
                         ]
 
                     case "look_left":
-                        degrees = arguments.get("degrees", 30)
+                        degrees = int(arguments.get("degrees", 30))
                         resp = await self._client.post("/ptz", json={"direction": "left", "degrees": degrees})
                         resp.raise_for_status()
                         return CallToolResult(content=[], structuredContent=resp.json())
 
                     case "look_right":
-                        degrees = arguments.get("degrees", 30)
+                        degrees = int(arguments.get("degrees", 30))
                         resp = await self._client.post("/ptz", json={"direction": "right", "degrees": degrees})
                         resp.raise_for_status()
                         return CallToolResult(content=[], structuredContent=resp.json())
 
                     case "look_up":
-                        degrees = arguments.get("degrees", 20)
+                        degrees = int(arguments.get("degrees", 20))
                         resp = await self._client.post("/ptz", json={"direction": "up", "degrees": degrees})
                         resp.raise_for_status()
                         return CallToolResult(content=[], structuredContent=resp.json())
 
                     case "look_down":
-                        degrees = arguments.get("degrees", 20)
+                        degrees = int(arguments.get("degrees", 20))
                         resp = await self._client.post("/ptz", json={"direction": "down", "degrees": degrees})
                         resp.raise_for_status()
                         return CallToolResult(content=[], structuredContent=resp.json())

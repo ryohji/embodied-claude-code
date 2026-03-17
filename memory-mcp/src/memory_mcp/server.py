@@ -597,22 +597,23 @@ class MemoryMCPServer:
                         if not content:
                             return [TextContent(type="text", text="Error: content is required")]
 
-                        auto_link = arguments.get("auto_link", True)
+                        _auto_link_raw = arguments.get("auto_link", True)
+                        auto_link = str(_auto_link_raw).lower() not in ("false", "0", "no")
 
                         if auto_link:
                             memory = await self._memory_store.save_with_auto_link(
                                 content=content,
                                 emotion=arguments.get("emotion", "neutral"),
-                                importance=arguments.get("importance", 3),
+                                importance=int(arguments.get("importance", 3)),
                                 category=arguments.get("category", "daily"),
-                                link_threshold=arguments.get("link_threshold", 0.8),
+                                link_threshold=float(arguments.get("link_threshold", 0.8)),
                             )
                             linked_info = f"\nLinked to: {len(memory.linked_ids)} memories"
                         else:
                             memory = await self._memory_store.save(
                                 content=content,
                                 emotion=arguments.get("emotion", "neutral"),
-                                importance=arguments.get("importance", 3),
+                                importance=int(arguments.get("importance", 3)),
                                 category=arguments.get("category", "daily"),
                             )
                             linked_info = ""
@@ -637,7 +638,7 @@ class MemoryMCPServer:
 
                         results = await self._memory_store.search(
                             query=query,
-                            n_results=arguments.get("n_results", 5),
+                            n_results=int(arguments.get("n_results", 5)),
                             emotion_filter=arguments.get("emotion_filter"),
                             category_filter=arguments.get("category_filter"),
                             date_from=arguments.get("date_from"),
@@ -666,7 +667,7 @@ class MemoryMCPServer:
 
                         results = await self._memory_store.recall(
                             context=context,
-                            n_results=arguments.get("n_results", 3),
+                            n_results=int(arguments.get("n_results", 3)),
                         )
 
                         if not results:
@@ -686,7 +687,7 @@ class MemoryMCPServer:
 
                     case "list_recent_memories":
                         memories = await self._memory_store.list_recent(
-                            limit=arguments.get("limit", 10),
+                            limit=int(arguments.get("limit", 10)),
                             category_filter=arguments.get("category_filter"),
                         )
 
@@ -729,8 +730,8 @@ Date Range:
 
                         results = await self._memory_store.recall_with_chain(
                             context=context,
-                            n_results=arguments.get("n_results", 3),
-                            chain_depth=arguments.get("chain_depth", 1),
+                            n_results=int(arguments.get("n_results", 3)),
+                            chain_depth=int(arguments.get("chain_depth", 1)),
                         )
 
                         if not results:
@@ -770,13 +771,15 @@ Date Range:
                         if not context:
                             return [TextContent(type="text", text="Error: context is required")]
 
+                        _incl_diag_raw = arguments.get("include_diagnostics", False)
+                        _include_diagnostics = str(_incl_diag_raw).lower() not in ("false", "0", "no")
                         results, diagnostics = await self._memory_store.recall_divergent(
                             context=context,
-                            n_results=arguments.get("n_results", 5),
-                            max_branches=arguments.get("max_branches", 3),
-                            max_depth=arguments.get("max_depth", 3),
-                            temperature=arguments.get("temperature", 0.7),
-                            include_diagnostics=arguments.get("include_diagnostics", False),
+                            n_results=int(arguments.get("n_results", 5)),
+                            max_branches=int(arguments.get("max_branches", 3)),
+                            max_depth=int(arguments.get("max_depth", 3)),
+                            temperature=float(arguments.get("temperature", 0.7)),
+                            include_diagnostics=_include_diagnostics,
                         )
 
                         if not results:
@@ -792,7 +795,7 @@ Date Range:
                                 f"{m.content}\n"
                             )
 
-                        if arguments.get("include_diagnostics", False):
+                        if _include_diagnostics:
                             output_lines.append(
                                 "\n=== Diagnostics ===\n"
                                 f"{json.dumps(diagnostics, indent=2, ensure_ascii=False)}"
@@ -807,7 +810,7 @@ Date Range:
 
                         diagnostics = await self._memory_store.get_association_diagnostics(
                             context=context,
-                            sample_size=arguments.get("sample_size", 20),
+                            sample_size=int(arguments.get("sample_size", 20)),
                         )
 
                         return [
@@ -820,9 +823,9 @@ Date Range:
 
                     case "consolidate_memories":
                         stats = await self._memory_store.consolidate_memories(
-                            window_hours=arguments.get("window_hours", 24),
-                            max_replay_events=arguments.get("max_replay_events", 200),
-                            link_update_strength=arguments.get("link_update_strength", 0.2),
+                            window_hours=int(arguments.get("window_hours", 24)),
+                            max_replay_events=int(arguments.get("max_replay_events", 200)),
+                            link_update_strength=float(arguments.get("link_update_strength", 0.2)),
                         )
 
                         return CallToolResult(
@@ -842,7 +845,7 @@ Date Range:
 
                         linked_memories = await self._memory_store.get_linked_memories(
                             memory_id=memory_id,
-                            depth=arguments.get("depth", 2),
+                            depth=int(arguments.get("depth", 2)),
                         )
 
                         output_lines = [f"Memory chain starting from {memory_id}:\n"]
@@ -881,11 +884,13 @@ Date Range:
                         if not memory_ids:
                             return [TextContent(type="text", text="Error: memory_ids is required")]
 
+                        _auto_sum_raw = arguments.get("auto_summarize", True)
+                        _auto_summarize = str(_auto_sum_raw).lower() not in ("false", "0", "no")
                         episode = await self._episode_manager.create_episode(
                             title=title,
                             memory_ids=memory_ids,
                             participants=arguments.get("participants"),
-                            auto_summarize=arguments.get("auto_summarize", True),
+                            auto_summarize=_auto_summarize,
                         )
 
                         return CallToolResult(
@@ -913,7 +918,7 @@ Date Range:
 
                         episodes = await self._episode_manager.search_episodes(
                             query=query,
-                            n_results=arguments.get("n_results", 5),
+                            n_results=int(arguments.get("n_results", 5)),
                         )
 
                         if not episodes:
@@ -974,8 +979,8 @@ Date Range:
 
                         # Create CameraPosition from dict
                         camera_position = CameraPosition(
-                            pan_angle=camera_pos_data["pan_angle"],
-                            tilt_angle=camera_pos_data["tilt_angle"],
+                            pan_angle=int(camera_pos_data["pan_angle"]),
+                            tilt_angle=int(camera_pos_data["tilt_angle"]),
                             preset_id=camera_pos_data.get("preset_id"),
                         )
 
@@ -984,7 +989,7 @@ Date Range:
                             image_path=image_path,
                             camera_position=camera_position,
                             emotion=arguments.get("emotion", "neutral"),
-                            importance=arguments.get("importance", 3),
+                            importance=int(arguments.get("importance", 3)),
                         )
 
                         return CallToolResult(
@@ -1022,7 +1027,7 @@ Date Range:
                             audio_path=audio_path,
                             transcript=transcript,
                             emotion=arguments.get("emotion", "neutral"),
-                            importance=arguments.get("importance", 3),
+                            importance=int(arguments.get("importance", 3)),
                         )
 
                         return CallToolResult(
@@ -1049,9 +1054,9 @@ Date Range:
                             return [TextContent(type="text", text="Error: pan_angle and tilt_angle are required")]
 
                         memories = await self._sensory_integration.recall_by_camera_position(
-                            pan_angle=pan_angle,
-                            tilt_angle=tilt_angle,
-                            tolerance=arguments.get("tolerance", 15),
+                            pan_angle=int(pan_angle),
+                            tilt_angle=int(tilt_angle),
+                            tolerance=int(arguments.get("tolerance", 15)),
                         )
 
                         if not memories:
@@ -1080,7 +1085,7 @@ Date Range:
                     # Phase 4.4: Working Memory Tools
                     case "get_working_memory":
                         working_memory = self._memory_store.get_working_memory()
-                        n_results = arguments.get("n_results", 10)
+                        n_results = int(arguments.get("n_results", 10))
 
                         memories = await working_memory.get_recent(n_results)
 
@@ -1152,7 +1157,7 @@ Date Range:
                             return [TextContent(type="text", text="Error: memory_id is required")]
 
                         direction = arguments.get("direction", "backward")
-                        max_depth = arguments.get("max_depth", 3)
+                        max_depth = int(arguments.get("max_depth", 3))
 
                         # 起点の記憶を取得
                         start_memory = await self._memory_store.get_by_id(memory_id)

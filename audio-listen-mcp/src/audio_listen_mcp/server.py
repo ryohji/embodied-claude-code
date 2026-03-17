@@ -172,7 +172,8 @@ class AudioListenMCPServer:
     async def _record(self, arguments: dict[str, Any]) -> str:
         """Record audio using either VAD or fixed duration."""
         duration = self._clamp_duration(arguments)
-        auto_stop = arguments.get("auto_stop", True)
+        _auto_stop_raw = arguments.get("auto_stop", True)
+        auto_stop = str(_auto_stop_raw).lower() not in ("false", "0", "no")
 
         if auto_stop:
             return await self._capture.record_with_vad(
