@@ -9,7 +9,7 @@ import os
 import httpx
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, ImageContent, TextContent, Tool
+from mcp.types import ImageContent, TextContent, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -85,22 +85,6 @@ class WifiCamMCPServer:
                     description="カメラデバイス情報を取得する。",
                     inputSchema={"type": "object", "properties": {}, "required": []},
                 ),
-                Tool(
-                    name="camera_presets",
-                    description="保存済みカメラプリセット一覧を取得する。",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                Tool(
-                    name="camera_go_to_preset",
-                    description="指定したプリセットにカメラを移動する。",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "preset_id": {"type": "string", "description": "プリセットID"}
-                        },
-                        "required": ["preset_id"],
-                    },
-                ),
             ]
 
         @self._server.call_tool()
@@ -108,7 +92,7 @@ class WifiCamMCPServer:
             try:
                 match name:
                     case "see":
-                        resp = await self._client.get("/see")
+                        resp = await self._client.get("/image")
                         if resp.status_code == 503:
                             return [TextContent(type="text", text="カメラ未接続")]
                         resp.raise_for_status()
@@ -120,39 +104,69 @@ class WifiCamMCPServer:
 
                     case "look_left":
                         degrees = int(arguments.get("degrees", 30))
-                        resp = await self._client.post("/ptz", json={"direction": "left", "degrees": degrees})
-                        resp.raise_for_status()
-                        return CallToolResult(content=[], structuredContent=resp.json())
-
-                    case "look_right":
-                        degrees = int(arguments.get("degrees", 30))
-                        resp = await self._client.post("/ptz", json={"direction": "right", "degrees": degrees})
-                        resp.raise_for_status()
-                        return CallToolResult(content=[], structuredContent=resp.json())
-
-                    case "look_up":
-                        degrees = int(arguments.get("degrees", 20))
-                        resp = await self._client.post("/ptz", json={"direction": "up", "degrees": degrees})
-                        resp.raise_for_status()
-                        return CallToolResult(content=[], structuredContent=resp.json())
-
-                    case "look_down":
-                        degrees = int(arguments.get("degrees", 20))
-                        resp = await self._client.post("/ptz", json={"direction": "down", "degrees": degrees})
-                        resp.raise_for_status()
-                        return CallToolResult(content=[], structuredContent=resp.json())
-
-                    case "look_around":
-                        resp = await self._client.get("/look_around", timeout=60.0)
+                        resp = await self._client.get(f"/image?pan=-{degrees}", timeout=30.0)
                         if resp.status_code == 503:
                             return [TextContent(type="text", text="カメラ未接続")]
                         resp.raise_for_status()
                         data = resp.json()
+                        return [
+                            ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
+                            TextContent(type="text", text=f"撮影: {data['timestamp']} ({data['width']}x{data['height']})"),
+                        ]
+
+                    case "look_right":
+                        degrees = int(arguments.get("degrees", 30))
+                        resp = await self._client.get(f"/image?pan={degrees}", timeout=30.0)
+                        if resp.status_code == 503:
+                            return [TextContent(type="text", text="カメラ未接続")]
+                        resp.raise_for_status()
+                        data = resp.json()
+                        return [
+                            ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
+                            TextContent(type="text", text=f"撮影: {data['timestamp']} ({data['width']}x{data['height']})"),
+                        ]
+
+                    case "look_up":
+                        degrees = int(arguments.get("degrees", 20))
+                        resp = await self._client.get(f"/image?tilt={degrees}", timeout=30.0)
+                        if resp.status_code == 503:
+                            return [TextContent(type="text", text="カメラ未接続")]
+                        resp.raise_for_status()
+                        data = resp.json()
+                        return [
+                            ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
+                            TextContent(type="text", text=f"撮影: {data['timestamp']} ({data['width']}x{data['height']})"),
+                        ]
+
+                    case "look_down":
+                        degrees = int(arguments.get("degrees", 20))
+                        resp = await self._client.get(f"/image?tilt=-{degrees}", timeout=30.0)
+                        if resp.status_code == 503:
+                            return [TextContent(type="text", text="カメラ未接続")]
+                        resp.raise_for_status()
+                        data = resp.json()
+                        return [
+                            ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
+                            TextContent(type="text", text=f"撮影: {data['timestamp']} ({data['width']}x{data['height']})"),
+                        ]
+
+                    case "look_around":
+                        shots = [
+                            ("左", "/image?pan=-45"),
+                            ("中央", "/image"),
+                            ("右", "/image?pan=45"),
+                            ("上", "/image?tilt=20"),
+                        ]
                         contents = []
-                        for capture in data["captures"]:
-                            contents.append(TextContent(type="text", text=f"--- {capture['direction']} ---"))
-                            contents.append(ImageContent(type="image", data=capture["image"], mimeType=capture["mime_type"]))
-                        contents.append(TextContent(type="text", text=f"{len(data['captures'])}枚撮影完了"))
+                        for label, path in shots:
+                            r = await self._client.get(path, timeout=30.0)
+                            if r.status_code == 503:
+                                return [TextContent(type="text", text="カメラ未接続")]
+                            r.raise_for_status()
+                            d = r.json()
+                            contents.append(TextContent(type="text", text=f"--- {label} ---"))
+                            contents.append(ImageContent(type="image", data=d["image"], mimeType=d["mime_type"]))
+                        contents.append(TextContent(type="text", text=f"{len(shots)}枚撮影完了"))
                         return contents
 
                     case "camera_info":
@@ -162,22 +176,6 @@ class WifiCamMCPServer:
                         resp.raise_for_status()
                         import json
                         return [TextContent(type="text", text=f"カメラ情報:\n{json.dumps(resp.json(), indent=2, ensure_ascii=False)}")]
-
-                    case "camera_presets":
-                        resp = await self._client.get("/presets")
-                        if resp.status_code == 503:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        resp.raise_for_status()
-                        import json
-                        return [TextContent(type="text", text=f"プリセット:\n{json.dumps(resp.json(), indent=2, ensure_ascii=False)}")]
-
-                    case "camera_go_to_preset":
-                        preset_id = arguments.get("preset_id", "")
-                        resp = await self._client.post(f"/preset/{preset_id}")
-                        if resp.status_code == 503:
-                            return [TextContent(type="text", text="カメラ未接続")]
-                        resp.raise_for_status()
-                        return CallToolResult(content=[], structuredContent=resp.json())
 
                     case _:
                         return [TextContent(type="text", text=f"不明なツール: {name}")]

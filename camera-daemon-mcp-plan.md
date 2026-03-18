@@ -62,24 +62,101 @@ Tapo C210
 
 ---
 
-## フェーズ 3: camera-daemon を HTTP デーモンに再設計（未着手）
+## フェーズ 3: camera-daemon を HTTP デーモンに再設計（完了）
 
 camera-daemon の MCP ツールを HTTP エンドポイントに変換し、
-Claude に対してツールを公開しない形に作り直す。
+Claude に対してツールを公開しない形に作り直した。
 
-- FastAPI（または aiohttp）で HTTP サーバーを追加
-- エンドポイント例: `GET /see`, `POST /ptz/left`, `POST /ptz/right` など
-- MCP ツールを削除（または空にする）
-- wifi-cam-mcp を復活させ、camera-daemon HTTP API を呼ぶ薄いラッパーとして再実装
-- `.mcp.json` に wifi-cam-mcp を再追加
+- aiohttp で HTTP サーバーを追加（完了）
+- MCP ツールを削除（list_tools が [] を返す）（完了）
+- wifi-cam-mcp を復活させ、camera-daemon HTTP API を呼ぶ薄いラッパーとして再実装（完了）
+- `.mcp.json` に wifi-cam-mcp を再追加（完了）
+- エンドポイント再設計・実装（完了 2026-03-19）
+
+### エンドポイント設計（確定）
+
+カメラが提供するローレベルの機能（画像取得・音声入力・音声出力）を軸に整理する。
+
+**目標 API 設計:**
+
+| エンドポイント | メソッド | 説明 |
+|---|---|---|
+| `/image` | GET | 現在の向きで画像取得（JPEG base64 JSON） |
+| `/image?pan=-30` | GET | 左に30°移動してから画像取得（正=右、負=左） |
+| `/image?tilt=20` | GET | 上に20°移動してから画像取得（正=上、負=下） |
+| `/audio?duration=5` | GET | カメラマイクから固定時間録音（WAV バイト列） |
+| `/audio?duration=30&vad` | GET | VAD 付き録音。`duration` が max_duration として使われる。`vad=30` と書いても同義 |
+| `/audio?duration=30&vad&silence_duration=1.5&silence_threshold=500` | GET | VAD 付き録音（詳細パラメーター指定） |
+| `/audio` | POST | WAV バイト列をカメラスピーカーに送出 |
+| `/info` | GET | カメラデバイス情報 |
+| `/stream_url` | GET | go2rtc ストリーム URL |
+
+**設計方針:**
+
+- `/see` と `/ptz` を統合して `/image` に。PTZ は画像取得前のオプション動作として `pan`・`tilt` クエリパラメーターで指定。符号で方向を示す（`pan=-30` = 左30°、`pan=30` = 右30°、`tilt=20` = 上20°）
+- `/audio` は入出力を HTTP メソッドで区別（GET = 入力、POST = 出力）
+- `GET /audio` の時間指定は `duration` に統一。`vad` が指定された場合は VAD モードとなり、`duration` が max_duration として使われる。`vad` 自体に値を指定した場合（`vad=30`）はそれが duration を上書きする
+- `/preset` は廃止。プリセット操作は利用側（wifi-cam-mcp 等）が `/image?pan=X&tilt=Y` をラップして提供する
+- TTS 変換（テキスト→音声）は camera-daemon では行わない。音声合成は audio-speak-mcp 側で実施し、生成した WAV バイト列を `POST /audio` で送る
+- `/say` エンドポイントは廃止（テキスト → TTS → バックチャンネル再生の責務を camera-daemon から外す）
+
+**変更対象（現状 → 変更後）:**
+
+| 現状 | 変更後 |
+|---|---|
+| `GET /see` | `GET /image` |
+| `POST /ptz` body: `{"direction": "left", "degrees": 30}` | `GET /image?pan=-30` |
+| `POST /ptz` body: `{"direction": "right", "degrees": 30}` | `GET /image?pan=30` |
+| `POST /ptz` body: `{"direction": "up", "degrees": 20}` | `GET /image?tilt=20` |
+| `POST /ptz` body: `{"direction": "down", "degrees": 20}` | `GET /image?tilt=-20` |
+| `GET /look_around` | 廃止 |
+| `GET /presets` | 廃止 |
+| `POST /preset/{preset_id}` | 廃止 |
+| `POST /say` | 廃止 → `POST /audio`（WAV バイト列受付）で代替 |
+
+変更に合わせて wifi-cam-mcp 側の HTTP 呼び出しも更新する。
 
 ---
 
 ## フェーズ 4: audio-listen / audio-speak の移行（未着手）
 
-- audio-listen-mcp の TapoAudioCapture を camera-daemon HTTP 経由に変更
-- audio-speak-mcp の Tapo バックチャンネルを camera-daemon HTTP 経由に変更
+### 概要
+
+- audio-listen-mcp の TapoAudioCapture を `GET /audio` 経由に変更
+- audio-speak-mcp の Tapo バックチャンネル出力を `POST /audio` 経由に変更
 - 各 MCP サーバーから Tapo 認証情報を削除
+
+### camera-daemon 側の実装
+
+フェーズ 3 で追加する `GET /audio` と `POST /audio` がそのまま使われる。
+
+**音声入力（audio-listen 向け）:**
+
+`GET /audio` の実装は `TapoAudioCapture` の `record` / `record_with_vad` を camera-daemon に移植したもの。
+レスポンスは `Content-Type: audio/wav` で WAV バイト列を直接返す。
+audio-listen-mcp は WAV を受け取り、既存の Whisper 転写処理に渡す。
+
+**音声出力（audio-speak 向け）:**
+
+`POST /audio` は `Content-Type: audio/wav` のリクエストボディ（WAV バイト列）を受け取り、
+go2rtc バックチャンネル経由でカメラスピーカーに送出する。
+audio-speak-mcp は Kokoro/ElevenLabs/say で音声合成 → WAV ファイル生成 → `POST /audio` に送信。
+
+### MCP サーバー側の変更
+
+- audio-listen-mcp の env から `TAPO_CAMERA_HOST / TAPO_USERNAME / TAPO_PASSWORD` を削除
+- audio-listen-mcp に `CAMERA_DAEMON_URL` と `USE_CAMERA_MIC` 環境変数を追加
+- audio-speak-mcp に `CAMERA_DAEMON_URL` と `USE_CAMERA_SPEAKER` 環境変数を追加
+
+呼び出し例:
+- `GET /audio?duration=5` → 固定5秒録音
+- `GET /audio?duration=30&vad` または `GET /audio?vad=30` → VAD付き、最大30秒
+- `GET /audio?vad=30&silence_duration=1.5&silence_threshold=500` → 詳細 VAD パラメーター付き
+
+### 移行後の .mcp.json
+
+- audio-listen-mcp の env: `TAPO_*` を削除し `CAMERA_DAEMON_URL` + `USE_CAMERA_MIC` を追加（任意）
+- audio-speak-mcp の env: `CAMERA_DAEMON_URL` + `USE_CAMERA_SPEAKER` を追加（任意）
 
 ---
 
