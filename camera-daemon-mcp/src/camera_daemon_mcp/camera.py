@@ -391,11 +391,11 @@ class TapoCamera:
             case Direction.RIGHT:
                 pan_delta = _degrees_to_normalized_pan(degrees)
             case Direction.UP:
-                # Tapo C220 ONVIF: y+ = physical DOWN, y- = physical UP
-                # (confirmed: y=1.0 is the lower limit when desk-mounted)
-                tilt_delta = -_degrees_to_normalized_tilt(degrees)
-            case Direction.DOWN:
+                # Tapo C210 ONVIF: y+ = physical UP (ceiling), y- = physical DOWN (floor)
+                # (実測確認: AbsoluteMove y=+0.3 → 天井, y=-0.6 → 部屋)
                 tilt_delta = _degrees_to_normalized_tilt(degrees)
+            case Direction.DOWN:
+                tilt_delta = -_degrees_to_normalized_tilt(degrees)
 
         # In ceiling mount mode the camera is upside-down:
         # - Tilt inverts (y=+1.0 becomes the upper limit)
@@ -428,8 +428,8 @@ class TapoCamera:
                 case Direction.DOWN:
                     self._sw_position.tilt = max(-90.0, self._sw_position.tilt - degrees)
 
-            # Give the motor time to move
-            await asyncio.sleep(0.5)
+            # Wait for the motor to finish moving
+            await self._wait_for_move_complete()
 
             return MoveResult(
                 direction=direction,
@@ -465,8 +465,8 @@ class TapoCamera:
             status = await self._ptz_service.GetStatus({"ProfileToken": self._profile_token})
             if status.Position and status.Position.PanTilt:
                 pan = status.Position.PanTilt.x
-                # Tapo ONVIF: y+ = physical DOWN (desk mount), flip for user
-                tilt = -status.Position.PanTilt.y
+                # Tapo C210 ONVIF: y+ = physical UP (ceiling), no flip needed
+                tilt = status.Position.PanTilt.y
                 if self._config.mount_mode == "ceiling":
                     # Ceiling: camera upside-down, both axes mirror
                     pan = -pan
@@ -475,6 +475,51 @@ class TapoCamera:
         except Exception as e:
             logger.debug("Failed to get hardware position: %s", e)
         return None
+
+    async def _wait_for_move_complete(
+        self,
+        timeout: float = 5.0,
+        poll_interval: float = 0.1,
+    ) -> None:
+        """Wait until the camera position stabilizes after a move.
+
+        Tapo C210 always reports MoveStatus.PanTilt = "UNKNOWN", so we cannot
+        rely on status polling. Instead, we poll Position via GetStatus and
+        declare the move complete when the position has not changed for two
+        consecutive reads (~poll_interval * 2 seconds).
+
+        Falls back to a fixed 2.0 s delay if GetStatus is unavailable.
+        """
+        # Give the motor a moment to start moving before first poll
+        await asyncio.sleep(0.15)
+        prev_x: float | None = None
+        prev_y: float | None = None
+        stable_count = 0
+        deadline = asyncio.get_event_loop().time() + timeout
+        try:
+            while asyncio.get_event_loop().time() < deadline:
+                status = await self._ptz_service.GetStatus(
+                    {"ProfileToken": self._profile_token}
+                )
+                pos = status.Position.PanTilt if (status.Position and status.Position.PanTilt) else None
+                if pos is None:
+                    await asyncio.sleep(2.0)
+                    return
+                x, y = pos.x, pos.y
+                if prev_x is not None and abs(x - prev_x) < 0.001 and abs(y - prev_y) < 0.001:
+                    stable_count += 1
+                    if stable_count >= 2:
+                        logger.debug("Move complete at t=%.2fs pos=(%.4f,%.4f)",
+                                     timeout - (deadline - asyncio.get_event_loop().time()), x, y)
+                        return
+                else:
+                    stable_count = 0
+                prev_x, prev_y = x, y
+                await asyncio.sleep(poll_interval)
+            logger.warning("Timed out waiting for camera move to complete")
+        except Exception as e:
+            logger.debug("GetStatus polling failed (%s), using fixed delay", e)
+            await asyncio.sleep(2.0)
 
     def reset_position_tracking(self) -> None:
         """Reset software position tracking to center (0, 0)."""
@@ -496,35 +541,119 @@ class TapoCamera:
         """Tilt camera downward."""
         return await self.move(Direction.DOWN, degrees)
 
-    async def look_around(self) -> list[CaptureResult]:
-        """Look around the room by capturing multiple angles.
+    async def move_combined(self, pan_degrees: int, tilt_degrees: int) -> MoveResult:
+        """Move pan and tilt simultaneously in a single RelativeMove call.
 
-        Captures: center, left, right, up-center positions.
+        Args:
+            pan_degrees: Positive = right, negative = left.
+            tilt_degrees: Positive = up, negative = down.
 
         Returns:
-            List of CaptureResults from different angles
+            MoveResult with operation status
         """
-        captures: list[CaptureResult] = []
+        return await self._with_reconnect(self._move_combined_impl, pan_degrees, tilt_degrees)
 
-        center = await self.capture_image()
-        captures.append(center)
+    async def _move_combined_impl(self, pan_degrees: int, tilt_degrees: int) -> MoveResult:
+        """Internal combined move implementation."""
+        pan_degrees = max(-90, min(90, pan_degrees))
+        tilt_degrees = max(-90, min(90, tilt_degrees))
 
-        await self.pan_left(45)
-        left = await self.capture_image()
-        captures.append(left)
+        # Convert degrees to ONVIF normalized values
+        # pan: positive = right, negative = left
+        pan_delta = _degrees_to_normalized_pan(pan_degrees)
+        # tilt: positive = up (user perspective) = positive ONVIF y
+        # (Tapo C210: y+ = physical UP (ceiling), y- = physical DOWN (floor))
+        tilt_delta = _degrees_to_normalized_tilt(tilt_degrees)
 
-        await self.pan_right(90)
-        right = await self.capture_image()
-        captures.append(right)
+        # Ceiling mount: both axes mirror
+        if self._config.mount_mode == "ceiling":
+            pan_delta = -pan_delta
+            tilt_delta = -tilt_delta
 
-        await self.pan_left(45)
-        await self.tilt_up(20)
-        up = await self.capture_image()
-        captures.append(up)
+        try:
+            await self._ptz_service.RelativeMove(
+                {
+                    "ProfileToken": self._profile_token,
+                    "Translation": {
+                        "PanTilt": {"x": pan_delta, "y": tilt_delta},
+                    },
+                }
+            )
 
-        await self.tilt_down(20)
+            # Update software tracking
+            self._sw_position.pan = max(-180.0, min(180.0, self._sw_position.pan + pan_degrees))
+            self._sw_position.tilt = max(-90.0, min(90.0, self._sw_position.tilt + tilt_degrees))
 
-        return captures
+            # Wait for the motor to finish moving
+            await self._wait_for_move_complete()
+
+            return MoveResult(
+                direction=Direction.RIGHT,
+                degrees=abs(pan_degrees),
+                success=True,
+                message=f"Moved pan={pan_degrees}, tilt={tilt_degrees} degrees",
+            )
+        except Exception as e:
+            return MoveResult(
+                direction=Direction.RIGHT,
+                degrees=abs(pan_degrees),
+                success=False,
+                message=f"Failed to move: {e!s}",
+            )
+
+    async def absolute_move(self, pan: float, tilt: float) -> MoveResult:
+        """Move camera to absolute position via ONVIF AbsoluteMove.
+
+        Args:
+            pan: Absolute pan position in ONVIF normalized [-1.0, 1.0].
+                 Positive = right, negative = left.
+            tilt: Absolute tilt position in ONVIF normalized [-1.0, 1.0].
+                  Positive = up, negative = down.
+
+        Returns:
+            MoveResult with operation status
+        """
+        return await self._with_reconnect(self._absolute_move_impl, pan, tilt)
+
+    async def _absolute_move_impl(self, pan: float, tilt: float) -> MoveResult:
+        pan = max(-1.0, min(1.0, pan))
+        tilt = max(-1.0, min(1.0, tilt))
+
+        pan_val = pan
+        tilt_val = tilt
+
+        if self._config.mount_mode == "ceiling":
+            pan_val = -pan_val
+            tilt_val = -tilt_val
+
+        try:
+            await self._ptz_service.AbsoluteMove(
+                {
+                    "ProfileToken": self._profile_token,
+                    "Position": {
+                        "PanTilt": {"x": pan_val, "y": tilt_val},
+                    },
+                }
+            )
+            # Update software tracking
+            self._sw_position.pan = pan * PAN_RANGE_DEGREES
+            self._sw_position.tilt = tilt * TILT_RANGE_DEGREES
+
+            await self._wait_for_move_complete()
+
+            return MoveResult(
+                direction=Direction.RIGHT,
+                degrees=0,
+                success=True,
+                message=f"Moved to pan={pan:.3f}, tilt={tilt:.3f}",
+            )
+        except Exception as e:
+            return MoveResult(
+                direction=Direction.RIGHT,
+                degrees=0,
+                success=False,
+                message=f"Failed to move: {e!s}",
+            )
 
     # ------------------------------------------------------------------
     # Device info & presets

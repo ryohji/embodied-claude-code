@@ -20,7 +20,21 @@ class WifiCamMCPServer:
     def __init__(self) -> None:
         self._server = Server("wifi-cam-mcp")
         self._client = httpx.AsyncClient(base_url=CAMERA_DAEMON_URL, timeout=30.0)
+        self._cached_direction: dict | None = None
         self._setup_handlers()
+
+    async def _get_or_fetch_direction(self) -> dict | None:
+        """現在の向きをキャッシュから返す。キャッシュがなければ GET /direction で取得。"""
+        if self._cached_direction is not None:
+            return self._cached_direction
+        try:
+            resp = await self._client.get("/direction")
+            if resp.status_code != 200:
+                return None
+            self._cached_direction = resp.json()
+            return self._cached_direction
+        except Exception:
+            return None
 
     def _setup_handlers(self) -> None:
         @self._server.list_tools()
@@ -104,10 +118,17 @@ class WifiCamMCPServer:
 
                     case "look_left":
                         degrees = int(arguments.get("degrees", 30))
-                        resp = await self._client.get(f"/image?pan=-{degrees}", timeout=30.0)
+                        direction = await self._get_or_fetch_direction()
+                        if direction is None:
+                            return [TextContent(type="text", text="カメラの現在位置を取得できません")]
+                        pan_delta = degrees / 180.0
+                        new_pan = max(-1.0, min(1.0, direction["pan"] + pan_delta))
+                        new_tilt = direction["tilt"]
+                        resp = await self._client.get(f"/image?pan={new_pan}&tilt={new_tilt}", timeout=30.0)
                         if resp.status_code == 503:
                             return [TextContent(type="text", text="カメラ未接続")]
                         resp.raise_for_status()
+                        self._cached_direction = {"pan": new_pan, "tilt": new_tilt}
                         data = resp.json()
                         return [
                             ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
@@ -116,10 +137,17 @@ class WifiCamMCPServer:
 
                     case "look_right":
                         degrees = int(arguments.get("degrees", 30))
-                        resp = await self._client.get(f"/image?pan={degrees}", timeout=30.0)
+                        direction = await self._get_or_fetch_direction()
+                        if direction is None:
+                            return [TextContent(type="text", text="カメラの現在位置を取得できません")]
+                        pan_delta = degrees / 180.0
+                        new_pan = max(-1.0, min(1.0, direction["pan"] - pan_delta))
+                        new_tilt = direction["tilt"]
+                        resp = await self._client.get(f"/image?pan={new_pan}&tilt={new_tilt}", timeout=30.0)
                         if resp.status_code == 503:
                             return [TextContent(type="text", text="カメラ未接続")]
                         resp.raise_for_status()
+                        self._cached_direction = {"pan": new_pan, "tilt": new_tilt}
                         data = resp.json()
                         return [
                             ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
@@ -128,10 +156,17 @@ class WifiCamMCPServer:
 
                     case "look_up":
                         degrees = int(arguments.get("degrees", 20))
-                        resp = await self._client.get(f"/image?tilt={degrees}", timeout=30.0)
+                        direction = await self._get_or_fetch_direction()
+                        if direction is None:
+                            return [TextContent(type="text", text="カメラの現在位置を取得できません")]
+                        tilt_delta = degrees / 90.0
+                        new_pan = direction["pan"]
+                        new_tilt = max(-1.0, min(1.0, direction["tilt"] + tilt_delta))
+                        resp = await self._client.get(f"/image?pan={new_pan}&tilt={new_tilt}", timeout=30.0)
                         if resp.status_code == 503:
                             return [TextContent(type="text", text="カメラ未接続")]
                         resp.raise_for_status()
+                        self._cached_direction = {"pan": new_pan, "tilt": new_tilt}
                         data = resp.json()
                         return [
                             ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
@@ -140,10 +175,17 @@ class WifiCamMCPServer:
 
                     case "look_down":
                         degrees = int(arguments.get("degrees", 20))
-                        resp = await self._client.get(f"/image?tilt=-{degrees}", timeout=30.0)
+                        direction = await self._get_or_fetch_direction()
+                        if direction is None:
+                            return [TextContent(type="text", text="カメラの現在位置を取得できません")]
+                        tilt_delta = degrees / 90.0
+                        new_pan = direction["pan"]
+                        new_tilt = max(-1.0, min(1.0, direction["tilt"] - tilt_delta))
+                        resp = await self._client.get(f"/image?pan={new_pan}&tilt={new_tilt}", timeout=30.0)
                         if resp.status_code == 503:
                             return [TextContent(type="text", text="カメラ未接続")]
                         resp.raise_for_status()
+                        self._cached_direction = {"pan": new_pan, "tilt": new_tilt}
                         data = resp.json()
                         return [
                             ImageContent(type="image", data=data["image"], mimeType=data["mime_type"]),
@@ -151,21 +193,29 @@ class WifiCamMCPServer:
                         ]
 
                     case "look_around":
+                        direction = await self._get_or_fetch_direction()
+                        if direction is None:
+                            return [TextContent(type="text", text="カメラの現在位置を取得できません")]
+                        p = direction["pan"]
+                        t = direction["tilt"]
+                        def clip(v: float) -> float:
+                            return max(-1.0, min(1.0, v))
                         shots = [
-                            ("左", "/image?pan=-45"),
-                            ("中央", "/image"),
-                            ("右", "/image?pan=45"),
-                            ("上", "/image?tilt=20"),
+                            ("left",  clip(p + 0.25), t),
+                            ("up",    p,               clip(t + 0.333)),
+                            ("right", clip(p - 0.25), t),
+                            ("front", p,               t),
                         ]
                         contents = []
-                        for label, path in shots:
-                            r = await self._client.get(path, timeout=30.0)
+                        for label, pan_val, tilt_val in shots:
+                            r = await self._client.get(f"/image?pan={pan_val}&tilt={tilt_val}", timeout=30.0)
                             if r.status_code == 503:
                                 return [TextContent(type="text", text="カメラ未接続")]
                             r.raise_for_status()
                             d = r.json()
                             contents.append(TextContent(type="text", text=f"--- {label} ---"))
                             contents.append(ImageContent(type="image", data=d["image"], mimeType=d["mime_type"]))
+                        self._cached_direction = {"pan": p, "tilt": t}
                         contents.append(TextContent(type="text", text=f"{len(shots)}枚撮影完了"))
                         return contents
 

@@ -118,6 +118,73 @@ Claude に対してツールを公開しない形に作り直した。
 
 ---
 
+## フェーズ 3.5: PTZ API の絶対値化・direction エンドポイント追加（未着手）
+
+### 背景
+
+現在の `/image?pan=X&tilt=Y` は **相対移動・度数指定**（例: `pan=-30` = 左30°）。
+これを **絶対位置・ONVIF 正規化値 [-1, 1] 指定** に変更する。
+あわせて現在向きの取得エンドポイント `GET /direction` を追加する。
+
+### camera-daemon 側の変更
+
+**エンドポイント設計（改訂後）:**
+
+| エンドポイント | メソッド | 説明 |
+|---|---|---|
+| `/image` | GET | 現在の向きで画像取得（移動なし） |
+| `/image?pan=X` | GET | pan のみ絶対指定。tilt は GetStatus で取得した現在値を維持 |
+| `/image?tilt=Y` | GET | tilt のみ絶対指定。pan は GetStatus で取得した現在値を維持 |
+| `/image?pan=X&tilt=Y` | GET | (X, Y) は ONVIF 正規化絶対値 [-1, 1]。AbsoluteMove してから画像取得 |
+| `/direction` | GET | 現在の向きを `{"pan": X, "tilt": Y}` で返す（GetStatus 使用、失敗時は 503） |
+| `/direction` | POST | body `{"pan": X, "tilt": Y}` で絶対位置に移動（撮影なし） |
+
+**camera.py への追加:**
+
+- `absolute_move(pan: float, tilt: float)` メソッドを追加
+  - [-1, 1] にクリップしてから ONVIF AbsoluteMove を送出
+  - ceiling モード時は両軸を反転
+  - 移動完了待ち（既存の `_wait_for_move_complete` を流用）
+
+### wifi-cam 側の変更
+
+**状態管理:**
+
+- `_cached_direction: dict | None = None` をサーバーインスタンスに追加
+- 初回 look_* 呼び出し時に `GET /direction` で取得してキャッシュ
+- 失敗時はエラーを返し、移動しない
+
+**look_* の実装方針:**
+
+```
+look_left(degrees=30):
+  pan_delta = degrees / 180.0   # 度 → ONVIF 正規化
+  new_pan = clip(cached_pan - pan_delta, -1.0, 1.0)
+  GET /image?pan={new_pan}&tilt={cached_tilt}
+  cached_pan = new_pan
+
+look_up(degrees=20):
+  tilt_delta = degrees / 90.0
+  new_tilt = clip(cached_tilt + tilt_delta, -1.0, 1.0)
+  GET /image?pan={cached_pan}&tilt={new_tilt}
+  cached_tilt = new_tilt
+```
+
+**look_around の実装方針:**
+
+1. 現在位置 (p, t) を取得（キャッシュ or GET /direction）
+2. 4 ショットの絶対座標を事前計算してクリップ:
+   - left:  `(clip(p - 0.25, -1, 1), t)`
+   - up:    `(p, clip(t + 0.333, -1, 1))`  ← 二等辺三角形の頂点（pan は元に戻る）
+   - right: `(clip(p + 0.25, -1, 1), t)`
+   - front: `(p, t)`  ← 元の位置（最後に必ず戻る）
+3. 各座標へ `GET /image?pan=X&tilt=Y` で AbsoluteMove + 撮影
+4. front ショットが最終位置なので `POST /direction` は不要
+
+`POST /direction` は look_around の戻り先復帰（撮影なし）にも使える。
+
+---
+
 ## フェーズ 4: audio-listen / audio-speak の移行（未着手）
 
 ### 概要
