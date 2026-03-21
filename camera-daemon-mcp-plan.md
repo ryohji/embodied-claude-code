@@ -84,9 +84,9 @@ Claude に対してツールを公開しない形に作り直した。
 | `/image` | GET | 現在の向きで画像取得（JPEG base64 JSON） |
 | `/image?pan=-30` | GET | 左に30°移動してから画像取得（正=右、負=左） |
 | `/image?tilt=20` | GET | 上に20°移動してから画像取得（正=上、負=下） |
-| `/audio?duration=5` | GET | カメラマイクから固定時間録音（WAV バイト列） |
-| `/audio?duration=30&vad` | GET | VAD 付き録音。`duration` が max_duration として使われる。`vad=30` と書いても同義 |
-| `/audio?duration=30&vad&silence_duration=1.5&silence_threshold=500` | GET | VAD 付き録音（詳細パラメーター指定） |
+| `/audio` | GET | VAD モード：発話終端を検出して終了。chunked PCM を返す |
+| `/audio?duration=5` | GET | 固定時間録音（5秒）。chunked PCM を返す |
+| `/audio?max_duration=60` | GET | VAD モード、安全弁として max_duration を上書き指定 |
 | `/audio` | POST | WAV バイト列をカメラスピーカーに送出 |
 | `/info` | GET | カメラデバイス情報 |
 | `/stream_url` | GET | go2rtc ストリーム URL |
@@ -95,7 +95,12 @@ Claude に対してツールを公開しない形に作り直した。
 
 - `/see` と `/ptz` を統合して `/image` に。PTZ は画像取得前のオプション動作として `pan`・`tilt` クエリパラメーターで指定。符号で方向を示す（`pan=-30` = 左30°、`pan=30` = 右30°、`tilt=20` = 上20°）
 - `/audio` は入出力を HTTP メソッドで区別（GET = 入力、POST = 出力）
-- `GET /audio` の時間指定は `duration` に統一。`vad` が指定された場合は VAD モードとなり、`duration` が max_duration として使われる。`vad` 自体に値を指定した場合（`vad=30`）はそれが duration を上書きする
+- `GET /audio` はデフォルトで VAD モード。発話終端を daemon 側で検出し、その時点で HTTP レスポンスを閉じる
+- `duration` を指定した場合は固定長録音モード
+- `max_duration` は daemon 内部の安全弁（デフォルト値あり）。呼び出し側から上書き可能だが、通常は指定不要
+- レスポンス形式は `Content-Type: audio/pcm;rate=16000;bits=16;channels=1` + `Transfer-Encoding: chunked`（WAV ではない）
+  - daemon 側はバッファリングせず PCM を流し続ける。受け取り側がすべてのチャンクを集積してから Whisper に渡す
+  - WAV ヘッダーの付与（長さフィールドが必要）は呼び出し側が担当する
 - `/preset` は廃止。プリセット操作は利用側（wifi-cam-mcp 等）が `/image?pan=X&tilt=Y` をラップして提供する
 - TTS 変換（テキスト→音声）は camera-daemon では行わない。音声合成は audio-speak-mcp 側で実施し、生成した WAV バイト列を `POST /audio` で送る
 - `/say` エンドポイントは廃止（テキスト → TTS → バックチャンネル再生の責務を camera-daemon から外す）
@@ -200,8 +205,10 @@ look_up(degrees=20):
 **音声入力（audio-listen 向け）:**
 
 `GET /audio` の実装は `TapoAudioCapture` の `record` / `record_with_vad` を camera-daemon に移植したもの。
-レスポンスは `Content-Type: audio/wav` で WAV バイト列を直接返す。
-audio-listen-mcp は WAV を受け取り、既存の Whisper 転写処理に渡す。
+VAD は daemon 内部に保持する（audio-listen-mcp からは移管）。
+レスポンスは `Content-Type: audio/pcm` + `Transfer-Encoding: chunked` で PCM を流し続け、
+VAD が終端を検出した時点で HTTP レスポンスを閉じる。daemon 側はバッファリングしない。
+audio-listen-mcp はすべてのチャンクを受け取り終えたら WAV ヘッダーを付与し、Whisper 転写処理に渡す。
 
 **音声出力（audio-speak 向け）:**
 
@@ -216,9 +223,9 @@ audio-speak-mcp は Kokoro/ElevenLabs/say で音声合成 → WAV ファイル�
 - audio-speak-mcp に `CAMERA_DAEMON_URL` と `USE_CAMERA_SPEAKER` 環境変数を追加
 
 呼び出し例:
+- `GET /audio` → VAD モード（デフォルト。発話が終わり次第返る）
 - `GET /audio?duration=5` → 固定5秒録音
-- `GET /audio?duration=30&vad` または `GET /audio?vad=30` → VAD付き、最大30秒
-- `GET /audio?vad=30&silence_duration=1.5&silence_threshold=500` → 詳細 VAD パラメーター付き
+- `GET /audio?max_duration=120` → VAD モード、安全弁を120秒に上書き
 
 ### 移行後の .mcp.json
 
