@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import urllib.request
 from typing import Any
 
 from mcp.server import Server
@@ -85,6 +86,26 @@ class AudioSpeakMCPServer:
                         _rate_raw = arguments.get("rate")
                         rate = int(_rate_raw) if _rate_raw is not None else None
                         engine = self._ensure_engine()
+
+                        if self._config.use_camera_speaker and self._config.camera_daemon_url:
+                            audio_bytes, content_type = await engine.synthesize(text, voice=voice, rate=rate)
+                            url = self._config.camera_daemon_url.rstrip("/") + "/audio"
+                            req = urllib.request.Request(
+                                url,
+                                data=audio_bytes,
+                                method="POST",
+                                headers={"Content-Type": content_type},
+                            )
+                            await asyncio.to_thread(urllib.request.urlopen, req)
+                            return CallToolResult(
+                                content=[],
+                                structuredContent={
+                                    "status": "spoken",
+                                    "engine": self._config.tts_engine + "+camera",
+                                    "text": text,
+                                },
+                            )
+
                         result = await engine.say(text, voice=voice, rate=rate)
                         if result.startswith("発話完了"):
                             return CallToolResult(

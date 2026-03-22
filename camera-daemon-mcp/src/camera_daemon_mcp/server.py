@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tempfile
+from pathlib import Path
 
 from aiohttp import web
 from mcp.server import Server
@@ -14,6 +16,7 @@ from mcp.types import Tool
 from .camera import TapoCamera
 from .config import CameraConfig, ServerConfig
 from .go2rtc import Go2RTCProcess
+from .playback import play_with_go2rtc
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +91,30 @@ class CameraDaemonMCPServer:
             return web.json_response({"status": "ok"})
         return web.Response(status=500, text=result.message)
 
+    async def _handle_audio_post(self, request: web.Request) -> web.Response:
+        content_type = request.content_type or ""
+        if "mpeg" in content_type or "mp3" in content_type:
+            ext = ".mp3"
+        elif "aiff" in content_type or "aif" in content_type:
+            ext = ".aiff"
+        else:
+            ext = ".wav"
+
+        data = await request.read()
+        if not data:
+            return web.Response(status=400, text="リクエストボディが空です")
+
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+            f.write(data)
+            tmp_path = f.name
+
+        try:
+            await play_with_go2rtc(tmp_path, self._go2rtc)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        return web.json_response({"status": "ok"})
+
     async def _handle_info(self, request: web.Request) -> web.Response:
         if self._camera is None:
             return web.Response(status=503, text="カメラ未接続")
@@ -103,6 +130,7 @@ class CameraDaemonMCPServer:
     def _make_app(self) -> web.Application:
         app = web.Application()
         app.router.add_get("/image", self._handle_image)
+        app.router.add_post("/audio", self._handle_audio_post)
         app.router.add_get("/direction", self._handle_direction_get)
         app.router.add_post("/direction", self._handle_direction_post)
         app.router.add_get("/info", self._handle_info)

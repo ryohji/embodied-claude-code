@@ -18,6 +18,16 @@ class TTSEngine(ABC):
     """Abstract base class for TTS engines."""
 
     @abstractmethod
+    async def synthesize(
+        self,
+        text: str,
+        voice: str | None = None,
+        rate: int | None = None,
+    ) -> tuple[bytes, str]:
+        """Generate audio. Returns (audio_bytes, mime_type). Raises on error."""
+        ...
+
+    @abstractmethod
     async def say(
         self,
         text: str,
@@ -43,6 +53,44 @@ class MacOSTTSEngine(TTSEngine):
     ) -> None:
         self._default_voice = default_voice
         self._default_rate = default_rate
+
+    async def synthesize(
+        self,
+        text: str,
+        voice: str | None = None,
+        rate: int | None = None,
+    ) -> tuple[bytes, str]:
+        voice = voice or self._default_voice
+        rate = rate or self._default_rate
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(text)
+            text_file = f.name
+
+        out_file = text_file.replace(".txt", ".aiff")
+        try:
+            cmd = ["say", "-v", voice]
+            if rate is not None:
+                cmd.extend(["-r", str(rate)])
+            cmd.extend(["-f", text_file, "-o", out_file])
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                err = stderr.decode().strip()
+                raise RuntimeError(f"say コマンドがエラーを返しました (code {proc.returncode}): {err}")
+
+            return Path(out_file).read_bytes(), "audio/aiff"
+        finally:
+            Path(text_file).unlink(missing_ok=True)
+            Path(out_file).unlink(missing_ok=True)
 
     async def say(
         self,
@@ -127,6 +175,34 @@ class ElevenLabsTTSEngine(TTSEngine):
         self._default_voice_id = default_voice_id
         self._model_id = model_id
 
+    async def synthesize(
+        self,
+        text: str,
+        voice: str | None = None,
+        rate: int | None = None,
+    ) -> tuple[bytes, str]:
+        try:
+            from elevenlabs import ElevenLabs
+        except ImportError:
+            raise RuntimeError(
+                "elevenlabs パッケージがインストールされていません。"
+                "pip install elevenlabs でインストールしてください。"
+            )
+
+        voice_id = voice or self._default_voice_id
+        if not voice_id:
+            raise RuntimeError("ElevenLabs の voice_id が指定されていません。ELEVENLABS_VOICE_ID を設定してください。")
+
+        client = ElevenLabs(api_key=self._api_key)
+        audio_generator = await asyncio.to_thread(
+            client.text_to_speech.convert,
+            text=text,
+            voice_id=voice_id,
+            model_id=self._model_id,
+        )
+        audio_bytes = b"".join(audio_generator)
+        return audio_bytes, "audio/mpeg"
+
     async def say(
         self,
         text: str,
@@ -150,18 +226,11 @@ class ElevenLabsTTSEngine(TTSEngine):
 
         # Generate audio using ElevenLabs API
         try:
-            client = ElevenLabs(api_key=self._api_key)
-            audio_generator = await asyncio.to_thread(
-                client.text_to_speech.convert,
-                text=text,
-                voice_id=voice_id,
-                model_id=self._model_id,
-            )
+            audio_bytes, _ = await self.synthesize(text, voice, rate)
 
             # Write audio to temp file
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-                for chunk in audio_generator:
-                    f.write(chunk)
+                f.write(audio_bytes)
                 audio_path = f.name
 
             # Play with mpv
@@ -224,6 +293,51 @@ class KokoroTTSEngine(TTSEngine):
             logger.info("Kokoro model loaded")
         return self._model
 
+    async def synthesize(
+        self,
+        text: str,
+        voice: str | None = None,
+        rate: int | None = None,
+    ) -> tuple[bytes, str]:
+        try:
+            import mlx_audio  # noqa: F401
+        except ImportError:
+            raise RuntimeError(
+                "mlx-audio パッケージがインストールされていません。"
+                "pip install mlx-audio 'misaki[ja]' でインストールしてください。"
+            )
+
+        import numpy as np
+        import soundfile as sf
+
+        voice = voice or self._default_voice
+        speed = self._default_speed
+
+        model = await asyncio.to_thread(self._ensure_model)
+
+        results = await asyncio.to_thread(
+            lambda: list(model.generate(
+                text,
+                voice=voice,
+                speed=speed,
+                lang_code=self._default_lang_code,
+            ))
+        )
+        if not results:
+            raise RuntimeError("Kokoro: 音声の生成に失敗しました。")
+
+        chunks = [np.array(r.audio) for r in results]
+        audio_data = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            sf.write(f.name, audio_data, 24000)
+            audio_path = f.name
+
+        try:
+            return Path(audio_path).read_bytes(), "audio/wav"
+        finally:
+            Path(audio_path).unlink(missing_ok=True)
+
     async def say(
         self,
         text: str,
@@ -242,33 +356,13 @@ class KokoroTTSEngine(TTSEngine):
             return "mpv が見つかりません。brew install mpv でインストールしてください。"
 
         voice = voice or self._default_voice
-        speed = self._default_speed
 
         try:
-            import numpy as np
-            import soundfile as sf
+            audio_bytes, _ = await self.synthesize(text, voice, rate)
 
-            model = await asyncio.to_thread(self._ensure_model)
-
-            # Generate audio (may return multiple chunks for long text)
-            results = await asyncio.to_thread(
-                lambda: list(model.generate(
-                    text,
-                    voice=voice,
-                    speed=speed,
-                    lang_code=self._default_lang_code,
-                ))
-            )
-            if not results:
-                return "Kokoro: 音声の生成に失敗しました。"
-
-            # Concatenate all chunks
-            chunks = [np.array(r.audio) for r in results]
-            audio_data = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
-
-            # Write to temp wav file
+            # Write to temp wav file for mpv playback
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                sf.write(f.name, audio_data, 24000)
+                f.write(audio_bytes)
                 audio_path = f.name
 
             # Play with mpv

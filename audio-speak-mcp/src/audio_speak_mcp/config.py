@@ -22,6 +22,8 @@ class SpeakConfig:
     kokoro_model_id: str
     kokoro_speed: float
     kokoro_lang_code: str
+    camera_daemon_url: str | None
+    use_camera_speaker: bool
 
     @classmethod
     def from_env(cls) -> SpeakConfig:
@@ -46,4 +48,6 @@ class SpeakConfig:
             ),
             kokoro_speed=kokoro_speed,
             kokoro_lang_code=os.getenv("KOKORO_LANG_CODE", "j"),
+            camera_daemon_url=os.getenv("CAMERA_DAEMON_URL"),
+            use_camera_speaker=os.getenv("USE_CAMERA_SPEAKER", "").lower() in ("1", "true", "yes"),
         )
