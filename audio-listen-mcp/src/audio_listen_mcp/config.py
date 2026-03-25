@@ -25,6 +25,7 @@ class ListenConfig:
     tapo_host: str | None
     tapo_username: str | None
     tapo_password: str | None
+    camera_daemon_url: str | None  # 例: "http://localhost:8080"
 
     @classmethod
     def from_env(cls) -> ListenConfig:
@@ -44,4 +45,5 @@ class ListenConfig:
             tapo_host=os.environ.get("TAPO_CAMERA_HOST"),
             tapo_username=os.environ.get("TAPO_USERNAME"),
             tapo_password=os.environ.get("TAPO_PASSWORD"),
+            camera_daemon_url=os.environ.get("CAMERA_DAEMON_URL"),
         )

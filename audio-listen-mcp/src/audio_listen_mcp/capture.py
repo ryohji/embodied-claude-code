@@ -11,6 +11,8 @@ import struct
 import tempfile
 import wave
 
+import httpx
+
 from .config import ListenConfig
 
 logger = logging.getLogger(__name__)
@@ -302,3 +304,81 @@ class TapoAudioCapture:
     async def list_devices(self) -> list[dict[str, str]]:
         """Return camera info as a single-item device list."""
         return [{"index": "tapo", "name": f"Tapo Camera ({self._config.tapo_host})"}]
+
+
+def _pcm_to_wav(pcm_data: bytes, sample_rate: int) -> str:
+    """Save raw PCM (s16le, mono) bytes to a temporary WAV file and return the path."""
+    fd, wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm_data)
+    return wav_path
+
+
+class CameraDaemonAudioCapture:
+    """Captures audio from camera-daemon's GET /audio HTTP endpoint."""
+
+    SAMPLE_RATE = 16000
+
+    def __init__(self, config: ListenConfig) -> None:
+        self._config = config
+        self._base_url = (config.camera_daemon_url or "http://localhost:8080").rstrip("/")
+
+    async def record(self, duration: int) -> str:
+        """Fetch fixed-duration PCM from camera-daemon and return path to WAV file."""
+        url = f"{self._base_url}/audio"
+        params = {"duration": duration}
+        timeout = httpx.Timeout(duration + 15)
+        logger.info("Fetching %ds audio from camera-daemon: %s", duration, url)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("GET", url, params=params) as resp:
+                resp.raise_for_status()
+                chunks: list[bytes] = []
+                async for chunk in resp.aiter_bytes():
+                    chunks.append(chunk)
+        pcm_data = b"".join(chunks)
+        if not pcm_data:
+            raise RuntimeError("camera-daemon returned empty audio data")
+        wav_path = _pcm_to_wav(pcm_data, self.SAMPLE_RATE)
+        actual_duration = len(pcm_data) / (self.SAMPLE_RATE * 2)
+        logger.info("Recorded %.1fs to %s", actual_duration, wav_path)
+        return wav_path
+
+    async def record_with_vad(
+        self,
+        max_duration: int,
+        silence_duration: float,
+        silence_threshold: int,
+    ) -> str:
+        """Fetch VAD-terminated PCM from camera-daemon and return path to WAV file."""
+        url = f"{self._base_url}/audio"
+        params = {
+            "max_duration": max_duration,
+            "silence_duration": silence_duration,
+            "silence_threshold": silence_threshold,
+        }
+        timeout = httpx.Timeout(max_duration + 15)
+        logger.info(
+            "Fetching VAD audio from camera-daemon: %s (max=%ds, silence=%.1fs, threshold=%d)",
+            url, max_duration, silence_duration, silence_threshold,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("GET", url, params=params) as resp:
+                resp.raise_for_status()
+                chunks: list[bytes] = []
+                async for chunk in resp.aiter_bytes():
+                    chunks.append(chunk)
+        pcm_data = b"".join(chunks)
+        if not pcm_data:
+            raise RuntimeError("camera-daemon returned empty audio data")
+        wav_path = _pcm_to_wav(pcm_data, self.SAMPLE_RATE)
+        actual_duration = len(pcm_data) / (self.SAMPLE_RATE * 2)
+        logger.info("Recorded %.1fs to %s", actual_duration, wav_path)
+        return wav_path
+
+    async def list_devices(self) -> list[dict[str, str]]:
+        """Return camera-daemon endpoint info as a single-item device list."""
+        return [{"index": "daemon", "name": f"Camera Daemon ({self._base_url})"}]
