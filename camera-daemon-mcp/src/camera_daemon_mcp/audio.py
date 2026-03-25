@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
-import struct
+from pathlib import Path
 
 from aiohttp import web
 
@@ -14,6 +13,65 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 CHUNK_DURATION = 0.1  # 100ms chunks
 CHUNK_BYTES = int(SAMPLE_RATE * 2 * CHUNK_DURATION)  # 3200 bytes (16-bit mono)
+
+
+class SileroVAD:
+    """Silero VAD wrapper using onnxruntime."""
+
+    MODEL_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+    MODEL_PATH = Path.home() / ".local" / "share" / "camera-daemon-mcp" / "silero_vad.onnx"
+    # Input from ffmpeg is 16kHz; we downsample 2x to 8kHz for Silero.
+    # 256 samples @ 8kHz = 32ms.  We consume 512 samples (1024 bytes) of 16kHz per frame.
+    FRAME_SAMPLES_16K = 512  # samples read from ffmpeg (16kHz)
+    FRAME_BYTES = FRAME_SAMPLES_16K * 2  # 1024 bytes
+    _SR = 8000
+
+    def __init__(self) -> None:
+        import onnxruntime as ort
+        import numpy as np
+        self._np = np
+        model_path = self._ensure_model()
+        self._session = ort.InferenceSession(str(model_path))
+        # Combined LSTM state (2, 1, 128)
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._sr = np.array(self._SR, dtype=np.int64)
+
+    def _ensure_model(self) -> Path:
+        """Download the model if not already cached."""
+        path = self.MODEL_PATH
+        if not path.exists():
+            import urllib.request
+            logger.info("Downloading Silero VAD model to %s", path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(self.MODEL_URL, path)
+            logger.info("Silero VAD model downloaded")
+        return path
+
+    def is_speech(self, frame: bytes) -> float:
+        """Run inference on a 512-sample (1024-byte) PCM frame.
+
+        Returns speech probability (0.0–1.0).
+        """
+        np = self._np
+        n_samples = len(frame) // 2
+        samples_16k = np.frombuffer(frame[:n_samples * 2], dtype=np.int16).astype(np.float32) / 32768.0
+        # Downsample 16kHz → 8kHz by averaging pairs
+        samples_8k = (samples_16k[0::2] + samples_16k[1::2]) / 2
+        audio = samples_8k[np.newaxis, :]  # shape: (1, 256)
+
+        ort_inputs = {
+            "input": audio,
+            "sr": self._sr,
+            "state": self._state,
+        }
+        ort_outputs = self._session.run(None, ort_inputs)
+        prob = float(ort_outputs[0].squeeze())  # output = speech probability
+        self._state = ort_outputs[1]
+        return prob
+
+    def reset(self) -> None:
+        """Reset LSTM state (call between utterances if needed)."""
+        self._state = self._np.zeros((2, 1, 128), dtype=self._np.float32)
 
 
 def _build_ffmpeg_cmd(rtsp_url: str, max_duration: int) -> list[str]:
@@ -62,9 +120,10 @@ async def stream_audio_vad(
     rtsp_url: str,
     max_duration: int,
     silence_duration: float = 1.5,
-    silence_threshold: int = 500,
+    vad_threshold: float = 0.5,
 ) -> None:
-    """Stream PCM audio from RTSP with RMS-based VAD end-of-speech detection."""
+    """Stream PCM audio from RTSP with Silero VAD end-of-speech detection."""
+    vad = await asyncio.to_thread(SileroVAD)  # モデルロード（初回はダウンロード）
     cmd = _build_ffmpeg_cmd(rtsp_url, max_duration)
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -74,33 +133,34 @@ async def stream_audio_vad(
     try:
         speech_detected = False
         silence_start: float | None = None
+        buf = bytearray()
 
         while True:
-            chunk = await proc.stdout.read(CHUNK_BYTES)
+            chunk = await proc.stdout.read(SileroVAD.FRAME_BYTES)
             if not chunk:
                 break
 
             await response.write(chunk)
+            buf.extend(chunk)
 
-            n_samples = len(chunk) // 2
-            if n_samples > 0:
-                samples = struct.unpack(f"<{n_samples}h", chunk[:n_samples * 2])
-                rms = math.sqrt(sum(s * s for s in samples) / n_samples)
-            else:
-                rms = 0.0
+            # Process complete 512-sample frames from the buffer
+            while len(buf) >= SileroVAD.FRAME_BYTES:
+                frame = bytes(buf[:SileroVAD.FRAME_BYTES])
+                buf = buf[SileroVAD.FRAME_BYTES:]
+                prob = await asyncio.to_thread(vad.is_speech, frame)
 
-            if rms >= silence_threshold:
-                if not speech_detected:
-                    logger.info("Speech detected (RMS=%.0f)", rms)
-                speech_detected = True
-                silence_start = None
-            elif speech_detected:
-                if silence_start is None:
-                    silence_start = asyncio.get_event_loop().time()
-                elapsed = asyncio.get_event_loop().time() - silence_start
-                if elapsed >= silence_duration:
-                    logger.info("Silence for %.1fs after speech, stopping VAD capture", elapsed)
-                    break
+                if prob >= vad_threshold:
+                    if not speech_detected:
+                        logger.info("Speech detected (prob=%.2f)", prob)
+                    speech_detected = True
+                    silence_start = None
+                elif speech_detected:
+                    if silence_start is None:
+                        silence_start = asyncio.get_event_loop().time()
+                    elapsed = asyncio.get_event_loop().time() - silence_start
+                    if elapsed >= silence_duration:
+                        logger.info("Silence for %.1fs after speech, stopping VAD", elapsed)
+                        return
     finally:
         if proc.returncode is None:
             proc.terminate()

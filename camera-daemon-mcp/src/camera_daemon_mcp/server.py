@@ -108,9 +108,9 @@ class CameraDaemonMCPServer:
                 max_duration = int(max_duration_str) if max_duration_str is not None else 300
                 silence_duration_str = request.rel_url.query.get("silence_duration")
                 silence_duration = float(silence_duration_str) if silence_duration_str is not None else 1.5
-                silence_threshold_str = request.rel_url.query.get("silence_threshold")
-                silence_threshold = int(silence_threshold_str) if silence_threshold_str is not None else 100
-                await stream_audio_vad(response, rtsp_url, max_duration, silence_duration, silence_threshold)
+                vad_threshold_str = request.rel_url.query.get("vad_threshold")
+                vad_threshold = float(vad_threshold_str) if vad_threshold_str is not None else 0.5
+                await stream_audio_vad(response, rtsp_url, max_duration, silence_duration, vad_threshold)
         except Exception:
             logger.exception("Error during audio streaming")
         finally:

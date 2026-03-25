@@ -358,12 +358,12 @@ class CameraDaemonAudioCapture:
         params = {
             "max_duration": max_duration,
             "silence_duration": silence_duration,
-            "silence_threshold": silence_threshold,
+            "vad_threshold": "0.5",  # Silero probability threshold (固定値)
         }
         timeout = httpx.Timeout(max_duration + 15)
         logger.info(
-            "Fetching VAD audio from camera-daemon: %s (max=%ds, silence=%.1fs, threshold=%d)",
-            url, max_duration, silence_duration, silence_threshold,
+            "Fetching VAD audio from camera-daemon: %s (max=%ds, silence=%.1fs)",
+            url, max_duration, silence_duration,
         )
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("GET", url, params=params) as resp:
