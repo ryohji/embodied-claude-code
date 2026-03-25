@@ -13,6 +13,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
+from .audio import stream_audio_fixed, stream_audio_vad
 from .camera import TapoCamera
 from .config import CameraConfig, ServerConfig
 from .go2rtc import Go2RTCProcess
@@ -91,6 +92,31 @@ class CameraDaemonMCPServer:
             return web.json_response({"status": "ok"})
         return web.Response(status=500, text=result.message)
 
+    async def _handle_audio_get(self, request: web.Request) -> web.StreamResponse:
+        rtsp_url = self._go2rtc.rtsp_url
+        response = web.StreamResponse(
+            headers={"Content-Type": "audio/pcm;rate=16000;bits=16;channels=1"},
+        )
+        response.enable_chunked_encoding()
+        await response.prepare(request)
+        try:
+            duration_str = request.rel_url.query.get("duration")
+            if duration_str is not None:
+                await stream_audio_fixed(response, rtsp_url, int(duration_str))
+            else:
+                max_duration_str = request.rel_url.query.get("max_duration")
+                max_duration = int(max_duration_str) if max_duration_str is not None else 300
+                silence_duration_str = request.rel_url.query.get("silence_duration")
+                silence_duration = float(silence_duration_str) if silence_duration_str is not None else 1.5
+                silence_threshold_str = request.rel_url.query.get("silence_threshold")
+                silence_threshold = int(silence_threshold_str) if silence_threshold_str is not None else 100
+                await stream_audio_vad(response, rtsp_url, max_duration, silence_duration, silence_threshold)
+        except Exception:
+            logger.exception("Error during audio streaming")
+        finally:
+            await response.write_eof()
+        return response
+
     async def _handle_audio_post(self, request: web.Request) -> web.Response:
         content_type = request.content_type or ""
         if "mpeg" in content_type or "mp3" in content_type:
@@ -130,6 +156,7 @@ class CameraDaemonMCPServer:
     def _make_app(self) -> web.Application:
         app = web.Application()
         app.router.add_get("/image", self._handle_image)
+        app.router.add_get("/audio", self._handle_audio_get)
         app.router.add_post("/audio", self._handle_audio_post)
         app.router.add_get("/direction", self._handle_direction_get)
         app.router.add_post("/direction", self._handle_direction_post)

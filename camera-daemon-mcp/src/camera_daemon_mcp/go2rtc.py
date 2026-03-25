@@ -107,6 +107,10 @@ class Go2RTCProcess:
     def stream_name(self) -> str:
         return self._stream_name
 
+    @property
+    def rtsp_url(self) -> str:
+        return f"rtsp://localhost:8554/{self._stream_name}"
+
     async def start(self) -> None:
         """Start the go2rtc process. Does nothing if already running."""
         if await self.is_running():
