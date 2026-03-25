@@ -10,9 +10,9 @@ from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
-SAMPLE_RATE = 16000
+SAMPLE_RATE = 8000
 CHUNK_DURATION = 0.1  # 100ms chunks
-CHUNK_BYTES = int(SAMPLE_RATE * 2 * CHUNK_DURATION)  # 3200 bytes (16-bit mono)
+CHUNK_BYTES = int(SAMPLE_RATE * 2 * CHUNK_DURATION)  # 1600 bytes (16-bit mono)
 
 
 class SileroVAD:
@@ -20,10 +20,9 @@ class SileroVAD:
 
     MODEL_URL = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
     MODEL_PATH = Path.home() / ".local" / "share" / "camera-daemon-mcp" / "silero_vad.onnx"
-    # Input from ffmpeg is 16kHz; we downsample 2x to 8kHz for Silero.
-    # 256 samples @ 8kHz = 32ms.  We consume 512 samples (1024 bytes) of 16kHz per frame.
-    FRAME_SAMPLES_16K = 512  # samples read from ffmpeg (16kHz)
-    FRAME_BYTES = FRAME_SAMPLES_16K * 2  # 1024 bytes
+    # 256 samples @ 8kHz = 32ms per frame
+    FRAME_SAMPLES = 256
+    FRAME_BYTES = FRAME_SAMPLES * 2  # 512 bytes
     _SR = 8000
 
     def __init__(self) -> None:
@@ -48,20 +47,18 @@ class SileroVAD:
         return path
 
     def is_speech(self, frame: bytes) -> float:
-        """Run inference on a 512-sample (1024-byte) PCM frame.
+        """Run inference on a 256-sample (512-byte) 8kHz PCM frame.
 
         Returns speech probability (0.0–1.0).
         """
         np = self._np
         n_samples = len(frame) // 2
-        samples_16k = np.frombuffer(frame[:n_samples * 2], dtype=np.int16).astype(np.float32) / 32768.0
-        # Downsample 16kHz → 8kHz by averaging pairs
-        samples_8k = (samples_16k[0::2] + samples_16k[1::2]) / 2
-        audio = samples_8k[np.newaxis, :]  # shape: (1, 256)
+        samples = np.frombuffer(frame[:n_samples * 2], dtype=np.int16).astype(np.float32) / 32768.0
+        audio = samples[np.newaxis, :]  # shape: (1, 256)
 
         ort_inputs = {
             "input": audio,
-            "sr": self._sr,
+            "sr":    self._sr,
             "state": self._state,
         }
         ort_outputs = self._session.run(None, ort_inputs)
@@ -143,7 +140,7 @@ async def stream_audio_vad(
             await response.write(chunk)
             buf.extend(chunk)
 
-            # Process complete 512-sample frames from the buffer
+            # Process complete 256-sample (8kHz) frames from the buffer
             while len(buf) >= SileroVAD.FRAME_BYTES:
                 frame = bytes(buf[:SileroVAD.FRAME_BYTES])
                 buf = buf[SileroVAD.FRAME_BYTES:]

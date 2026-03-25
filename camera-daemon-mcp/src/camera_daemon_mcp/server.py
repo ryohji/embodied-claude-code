@@ -95,7 +95,7 @@ class CameraDaemonMCPServer:
     async def _handle_audio_get(self, request: web.Request) -> web.StreamResponse:
         rtsp_url = self._go2rtc.rtsp_url
         response = web.StreamResponse(
-            headers={"Content-Type": "audio/pcm;rate=16000;bits=16;channels=1"},
+            headers={"Content-Type": "audio/pcm;rate=8000;bits=16;channels=1"},
         )
         response.enable_chunked_encoding()
         await response.prepare(request)

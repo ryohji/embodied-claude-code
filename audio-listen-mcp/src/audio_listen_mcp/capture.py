@@ -321,7 +321,7 @@ def _pcm_to_wav(pcm_data: bytes, sample_rate: int) -> str:
 class CameraDaemonAudioCapture:
     """Captures audio from camera-daemon's GET /audio HTTP endpoint."""
 
-    SAMPLE_RATE = 16000
+    SAMPLE_RATE = 8000
 
     def __init__(self, config: ListenConfig) -> None:
         self._config = config
