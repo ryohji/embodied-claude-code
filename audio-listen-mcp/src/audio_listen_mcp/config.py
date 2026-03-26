@@ -21,10 +21,6 @@ class ListenConfig:
     max_duration: int
     vad_silence_duration: float
     vad_silence_threshold: int
-    use_tapo_audio: bool
-    tapo_host: str | None
-    tapo_username: str | None
-    tapo_password: str | None
     camera_daemon_url: str | None  # 例: "http://localhost:8080"
 
     @classmethod
@@ -41,9 +37,5 @@ class ListenConfig:
             max_duration=int(os.environ.get("LISTEN_MAX_DURATION", "30")),
             vad_silence_duration=float(os.environ.get("VAD_SILENCE_DURATION", "2.0")),
             vad_silence_threshold=int(os.environ.get("VAD_SILENCE_THRESHOLD", "500")),
-            use_tapo_audio="USE_TAPO_AUDIO" in os.environ,
-            tapo_host=os.environ.get("TAPO_CAMERA_HOST"),
-            tapo_username=os.environ.get("TAPO_USERNAME"),
-            tapo_password=os.environ.get("TAPO_PASSWORD"),
             camera_daemon_url=os.environ.get("CAMERA_DAEMON_URL"),
         )
