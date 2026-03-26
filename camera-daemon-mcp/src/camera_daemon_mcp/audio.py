@@ -79,7 +79,7 @@ def _build_ffmpeg_cmd(rtsp_url: str, max_duration: int) -> list[str]:
         "-rtsp_transport", "tcp",
         "-i", rtsp_url,
         "-vn",
-        "-af", "volume=20dB",
+        "-af", "dynaudnorm=f=150:g=15",
         "-acodec", "pcm_s16le",
         "-ar", str(SAMPLE_RATE),
         "-ac", "1",
